@@ -1,48 +1,65 @@
+/**
+ * Copyright 2026 GitProxy Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+import { Request } from 'express';
+
 import { Action, Step } from '../../actions';
 import { getCommitConfig } from '../../../config';
+import { handleErrorAndLogInStep } from '../../../utils/errors';
 
-const commitConfig = getCommitConfig();
+const isMessageAllowed = (commitMessage: string, step: Step): boolean => {
+  try {
+    const commitConfig = getCommitConfig();
 
-const isMessageAllowed = (commitMessage: string): boolean => {
-  console.log(`isMessageAllowed(${commitMessage})`);
+    // Commit message is empty, i.e. '', null or undefined
+    if (!commitMessage) {
+      step.log('No commit message included.');
+      return false;
+    }
 
-  // Commit message is empty, i.e. '', null or undefined
-  if (!commitMessage) {
-    console.log('No commit message included...');
-    return false;
-  }
+    // Validation for configured block pattern(s) check...
+    if (typeof commitMessage !== 'string') {
+      step.log('A non-string value has been captured for the commit message.');
+      return false;
+    }
 
-  // Validation for configured block pattern(s) check...
-  if (typeof commitMessage !== 'string') {
-    console.log('A non-string value has been captured for the commit message...');
-    return false;
-  }
+    // Configured blocked literals and patterns
+    const blockedLiterals: string[] = commitConfig.message?.block?.literals ?? [];
+    const blockedPatterns: string[] = commitConfig.message?.block?.patterns ?? [];
 
-  // Configured blocked literals
-  const blockedLiterals: string[] = commitConfig?.message?.block?.literals ?? [];
+    // Find all instances of blocked literals and patterns in commit message
+    const positiveLiterals = blockedLiterals.map((literal: string) =>
+      commitMessage.toLowerCase().includes(literal.toLowerCase()),
+    );
 
-  // Configured blocked patterns
-  const blockedPatterns: string[] = commitConfig?.message?.block?.patterns ?? [];
+    const positivePatterns = blockedPatterns.map((pattern: string) =>
+      commitMessage.match(new RegExp(pattern, 'gi')),
+    );
 
-  // Find all instances of blocked literals in commit message...
-  const positiveLiterals = blockedLiterals.map((literal: string) =>
-    commitMessage.toLowerCase().includes(literal.toLowerCase()),
-  );
+    // Flatten any positive literal and pattern results into a 1D array
+    const literalMatches = positiveLiterals.flat().filter((result) => !!result);
+    const patternMatches = positivePatterns.flat().filter((result) => !!result);
 
-  // Find all instances of blocked patterns in commit message...
-  const positivePatterns = blockedPatterns.map((pattern: string) =>
-    commitMessage.match(new RegExp(pattern, 'gi')),
-  );
-
-  // Flatten any positive literal results into a 1D array...
-  const literalMatches = positiveLiterals.flat().filter((result) => !!result);
-
-  // Flatten any positive pattern results into a 1D array...
-  const patternMatches = positivePatterns.flat().filter((result) => !!result);
-
-  // Commit message matches configured block pattern(s)
-  if (literalMatches.length || patternMatches.length) {
-    console.log('Commit message is blocked via configured literals/patterns...');
+    // Commit message matches configured block pattern(s)
+    if (literalMatches.length || patternMatches.length) {
+      step.log('Commit message is blocked via configured literals/patterns.');
+      return false;
+    }
+  } catch (error: unknown) {
+    handleErrorAndLogInStep(step, error, 'Error checking commit messages');
     return false;
   }
 
@@ -50,21 +67,16 @@ const isMessageAllowed = (commitMessage: string): boolean => {
 };
 
 // Execute if the repo is approved
-const exec = async (req: any, action: Action): Promise<Action> => {
+const exec = async (_req: Request, action: Action): Promise<Action> => {
   const step = new Step('checkCommitMessages');
 
   const uniqueCommitMessages = [...new Set(action.commitData?.map((commit) => commit.message))];
-  console.log({ uniqueCommitMessages });
 
-  const illegalMessages = uniqueCommitMessages.filter((message) => !isMessageAllowed(message));
-  console.log({ illegalMessages });
+  const illegalMessages = uniqueCommitMessages.filter(
+    (message) => !isMessageAllowed(message, step),
+  );
 
-  const usingIllegalMessages = illegalMessages.length > 0;
-  console.log({ usingIllegalMessages });
-
-  if (usingIllegalMessages) {
-    console.log(`The following commit messages are illegal: ${illegalMessages}`);
-
+  if (illegalMessages.length > 0) {
     step.error = true;
     step.log(`The following commit messages are illegal: ${illegalMessages}`);
     step.setError(
@@ -75,7 +87,7 @@ const exec = async (req: any, action: Action): Promise<Action> => {
     return action;
   }
 
-  console.log(`The following commit messages are legal: ${uniqueCommitMessages}`);
+  step.log(`The following commit messages are legal: ${uniqueCommitMessages}`);
   action.addStep(step);
   return action;
 };

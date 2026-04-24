@@ -1,5 +1,22 @@
+/**
+ * Copyright 2026 GitProxy Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 import { Action } from '../proxy/actions/Action';
 import MongoDBStore from 'connect-mongo';
+import { CompletedAttestation, Rejection } from '../proxy/processors/types';
 
 export type PushQuery = {
   error: boolean;
@@ -28,6 +45,13 @@ export type UserQuery = {
 export type QueryValue = string | boolean | number | undefined;
 
 export type UserRole = 'canPush' | 'canAuthorise';
+
+export type PublicKeyRecord = {
+  key: string;
+  name: string;
+  addedAt: string;
+  fingerprint: string;
+};
 
 export class Repo {
   project: string;
@@ -58,7 +82,7 @@ export class User {
   email: string;
   admin: boolean;
   oidcId?: string | null;
-  publicKeys?: string[];
+  publicKeys?: PublicKeyRecord[];
   displayName?: string | null;
   title?: string | null;
   _id?: string;
@@ -70,7 +94,7 @@ export class User {
     email: string,
     admin: boolean,
     oidcId: string | null = null,
-    publicKeys: string[] = [],
+    publicKeys: PublicKeyRecord[] = [],
     _id?: string,
   ) {
     this.username = username;
@@ -84,15 +108,24 @@ export class User {
   }
 }
 
+export interface PublicUser {
+  username: string;
+  displayName: string;
+  email: string;
+  title: string;
+  gitAccount: string;
+  admin: boolean;
+}
+
 export interface Sink {
   getSessionStore: () => MongoDBStore | undefined;
   getPushes: (query: Partial<PushQuery>) => Promise<Action[]>;
   writeAudit: (action: Action) => Promise<void>;
   getPush: (id: string) => Promise<Action | null>;
   deletePush: (id: string) => Promise<void>;
-  authorise: (id: string, attestation: any) => Promise<{ message: string }>;
+  authorise: (id: string, attestation?: CompletedAttestation) => Promise<{ message: string }>;
   cancel: (id: string) => Promise<{ message: string }>;
-  reject: (id: string, attestation: any) => Promise<{ message: string }>;
+  reject: (id: string, rejection: Rejection) => Promise<{ message: string }>;
   getRepos: (query?: Partial<RepoQuery>) => Promise<Repo[]>;
   getRepo: (name: string) => Promise<Repo | null>;
   getRepoByUrl: (url: string) => Promise<Repo | null>;
@@ -111,6 +144,7 @@ export interface Sink {
   createUser: (user: User) => Promise<void>;
   deleteUser: (username: string) => Promise<void>;
   updateUser: (user: Partial<User>) => Promise<void>;
-  addPublicKey: (username: string, publicKey: string) => Promise<void>;
-  removePublicKey: (username: string, publicKey: string) => Promise<void>;
+  addPublicKey: (username: string, publicKey: PublicKeyRecord) => Promise<void>;
+  removePublicKey: (username: string, fingerprint: string) => Promise<void>;
+  getPublicKeys: (username: string) => Promise<PublicKeyRecord[]>;
 }

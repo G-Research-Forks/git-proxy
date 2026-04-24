@@ -1,7 +1,25 @@
-import { Action, Step } from '../../actions';
+/**
+ * Copyright 2026 GitProxy Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+import { Request } from 'express';
 import fs from 'fs';
 import lod from 'lodash';
 import { createInflate } from 'zlib';
+
+import { Action, Step } from '../../actions';
 import { CommitContent, CommitData, CommitHeader, PackMeta, PersonLine } from '../types';
 import {
   BRANCH_PREFIX,
@@ -10,6 +28,8 @@ import {
   PACKET_SIZE,
   GIT_OBJECT_TYPE_COMMIT,
 } from '../constants';
+import { parsePacketLines } from '../pktLineParser';
+import { getErrorMessage } from '../../../utils/errors';
 
 const dir = './.tmp/';
 
@@ -27,15 +47,18 @@ const EIGHTH_BIT_MASK = 0x80;
 
 /**
  * Executes the parsing of a push request.
- * @param {*} req - The request object containing the push data.
+ * @param {Request} req - The Express Request object containing the push data.
  * @param {Action} action - The action object to be modified.
  * @return {Promise<Action>} The modified action object.
  */
-async function exec(req: any, action: Action): Promise<Action> {
+async function exec(req: Request, action: Action): Promise<Action> {
   const step = new Step('parsePackFile');
   try {
     if (!req.body || req.body.length === 0) {
       throw new Error('No body found in request');
+    }
+    if (typeof req.body === 'string' || Array.isArray(req.body) || !Buffer.isBuffer(req.body)) {
+      throw new Error('Request body must be a Buffer');
     }
     const [packetLines, packDataOffset] = parsePacketLines(req.body);
     const refUpdates = packetLines.filter((line) => line.includes(BRANCH_PREFIX));
@@ -46,8 +69,6 @@ async function exec(req: any, action: Action): Promise<Action> {
       throw new Error(
         'Your push has been blocked. Please make sure you are pushing to a single branch.',
       );
-    } else {
-      console.log(`refUpdates: ${JSON.stringify(refUpdates, null, 2)}`);
     }
 
     const [commitParts] = refUpdates[0].split('\0');
@@ -63,6 +84,8 @@ async function exec(req: any, action: Action): Promise<Action> {
     // Strip everything after NUL, which is cap-list from
     // https://git-scm.com/docs/http-protocol#_smart_server_response
     action.branch = ref.replace(/\0.*/, '').trim();
+
+    // Note this will change the action.id to be based on the commits
     action.setCommit(oldCommit, newCommit);
 
     // Check if the offset is valid and if there's data after it
@@ -81,7 +104,7 @@ async function exec(req: any, action: Action): Promise<Action> {
     const [meta, contentBuff] = getPackMeta(buf);
     const contents = await getContents(contentBuff, meta.entries);
 
-    action.commitData = getCommitData(contents as any);
+    action.commitData = getCommitData(contents);
 
     if (action.commitData.length === 0) {
       step.log('No commit data found when parsing push.');
@@ -90,19 +113,27 @@ async function exec(req: any, action: Action): Promise<Action> {
         action.commitFrom = action.commitData[action.commitData.length - 1].parent;
       }
 
-      const { committer, committerEmail } = action.commitData[action.commitData.length - 1];
-      console.log(`Push Request received from user ${committer} with email ${committerEmail}`);
-      action.user = committer;
-      action.userEmail = committerEmail;
+      if (req.user) {
+        const { username, email } = req.user as { username: string; email?: string };
+        step.log(`Push request received from authenticated user ${username} with email ${email}`);
+        action.user = username;
+        action.userEmail = email;
+      } else {
+        const { committer, committerEmail } = action.commitData[action.commitData.length - 1];
+        // Note: This is not always the pusher's email, it's the last committer's email.
+        // See https://github.com/finos/git-proxy/issues/1400
+        step.log(`Push request received from user ${committer} with email ${committerEmail}`);
+        action.user = committer;
+        action.userEmail = committerEmail;
+      }
     }
 
     step.content = {
       meta: meta,
     };
-  } catch (e: any) {
-    step.setError(
-      `Unable to parse push. Please contact an administrator for support: ${e.toString('utf-8')}`,
-    );
+  } catch (error: unknown) {
+    const msg = getErrorMessage(error);
+    step.setError(`Unable to parse push. Please contact an administrator for support: ${msg}`);
   } finally {
     action.addStep(step);
   }
@@ -222,8 +253,6 @@ const getCommitData = (contents: CommitContent[]): CommitData[] => {
     .chain(contents)
     .filter({ type: GIT_OBJECT_TYPE_COMMIT })
     .map((x: CommitContent) => {
-      console.log({ x });
-
       const allLines = x.content.split('\n');
       let headerEndIndex = -1;
 
@@ -246,7 +275,6 @@ const getCommitData = (contents: CommitContent[]): CommitData[] => {
         .slice(headerEndIndex + 1)
         .join('\n')
         .trim();
-      console.log({ headerLines, message });
 
       const { tree, parents, author, committer } = getParsedData(headerLines);
       // No parent headers -> zero hash
@@ -479,10 +507,10 @@ const decompressGitObjects = async (buffer: Buffer): Promise<GitObject[]> => {
     };
 
     // stop on errors, except maybe buffer errors?
-    const onError = (e: any) => {
-      error = e;
-      console.warn(`Error during inflation: ${JSON.stringify(e)}`);
-      error = new Error('Error during inflation', { cause: e });
+    const onError = (e: unknown) => {
+      const msg = getErrorMessage(e);
+      console.warn(`Error during inflation: ${msg}`);
+      error = new Error(`Error during inflation: ${msg}`);
       inflater.end();
       done = true;
       if (currentWriteResolve) currentWriteResolve();
@@ -506,9 +534,10 @@ const decompressGitObjects = async (buffer: Buffer): Promise<GitObject[]> => {
             offset++;
           }
         });
-      } catch (e) {
-        console.warn(`Error during decompression: ${JSON.stringify(e)}`);
-        error = new Error('Error during decompression', { cause: e });
+      } catch (e: unknown) {
+        const msg = getErrorMessage(e);
+        console.warn(`Error during decompression: ${msg}`);
+        error = new Error(`Error during decompression: ${msg}`);
       }
     }
     const result = {
@@ -533,43 +562,6 @@ const decompressGitObjects = async (buffer: Buffer): Promise<GitObject[]> => {
   return results;
 };
 
-/**
- * Parses the packet lines from a buffer into an array of strings.
- * Also returns the offset immediately following the parsed lines (including the flush packet).
- * @param {Buffer} buffer - The buffer containing the packet data.
- * @return {[string[], number]} An array containing the parsed lines and the offset after the last parsed line/flush packet.
- */
-const parsePacketLines = (buffer: Buffer): [string[], number] => {
-  const lines: string[] = [];
-  let offset = 0;
-
-  while (offset + PACKET_SIZE <= buffer.length) {
-    const lengthHex = buffer.toString('utf8', offset, offset + PACKET_SIZE);
-    const length = Number(`0x${lengthHex}`);
-
-    // Prevent non-hex characters from causing issues
-    if (isNaN(length) || length < 0) {
-      throw new Error(`Invalid packet line length ${lengthHex} at offset ${offset}`);
-    }
-
-    // length of 0 indicates flush packet (0000)
-    if (length === 0) {
-      offset += PACKET_SIZE; // Include length of the flush packet
-      break;
-    }
-
-    // Make sure we don't read past the end of the buffer
-    if (offset + length > buffer.length) {
-      throw new Error(`Invalid packet line length ${lengthHex} at offset ${offset}`);
-    }
-
-    const line = buffer.toString('utf8', offset + PACKET_SIZE, offset + length);
-    lines.push(line);
-    offset += length; // Move offset to the start of the next line's length prefix
-  }
-  return [lines, offset];
-};
-
 exec.displayName = 'parsePush.exec';
 
-export { exec, getCommitData, getContents, getPackMeta, parsePacketLines };
+export { exec, getCommitData, getContents, getPackMeta };

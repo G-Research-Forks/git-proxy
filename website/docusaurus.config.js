@@ -1,3 +1,19 @@
+/**
+ * Copyright 2026 GitProxy Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 // Docs at https://v2.docusaurus.io/docs/configuration
 
 const projectName = 'GitProxy';
@@ -15,6 +31,38 @@ module.exports = {
   customFields: {
     version,
     posts: [
+      {
+        platform: 'linkedin',
+        url: 'https://www.linkedin.com/embed/feed/update/urn:li:activity:7384600028029419520',
+      },
+      {
+        platform: 'linkedin',
+        url: 'https://www.linkedin.com/embed/feed/update/urn:li:activity:7296172481868955648',
+      },
+      {
+        platform: 'linkedin',
+        url: 'https://www.linkedin.com/embed/feed/update/urn:li:activity:7367207134180106240',
+      },
+      {
+        platform: 'linkedin',
+        url: 'https://www.linkedin.com/embed/feed/update/urn:li:activity:7368312868221423618',
+      },
+      {
+        platform: 'linkedin',
+        url: 'https://www.linkedin.com/embed/feed/update/urn:li:activity:7354140689141575683',
+      },
+      {
+        platform: 'linkedin',
+        url: 'https://www.linkedin.com/embed/feed/update/urn:li:activity:7269738545248927744',
+      },
+      {
+        platform: 'linkedin',
+        url: 'https://www.linkedin.com/embed/feed/update/urn:li:activity:7363921020300210177',
+      },
+      {
+        platform: 'linkedin',
+        url: 'https://www.linkedin.com/embed/feed/update/urn:li:activity:7251398809258201088',
+      },
       {
         platform: 'linkedin',
         url: 'https://www.linkedin.com/embed/feed/update/urn:li:share:7092203565380722688',
@@ -66,6 +114,10 @@ module.exports = {
       {
         platform: 'linkedin',
         url: 'https://www.linkedin.com/embed/feed/update/urn:li:activity:7196479537872859137',
+      },
+      {
+        platform: 'linkedin',
+        url: 'https://www.linkedin.com/embed/feed/update/urn:li:activity:7386982216444264448',
       },
     ],
   },

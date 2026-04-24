@@ -1,20 +1,22 @@
+/**
+ * Copyright 2026 GitProxy Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 import { processGitURLForNameAndOrg, processUrlPath } from '../routes/helper';
 import { Step } from './Step';
-
-/**
- * Represents a commit.
- */
-export interface Commit {
-  message: string;
-  committer: string;
-  committerEmail: string;
-  tree: string;
-  parent: string;
-  author: string;
-  authorEmail: string;
-  commitTS?: string; // TODO: Normalize this to commitTimestamp
-  commitTimestamp?: string;
-}
+import { CompletedAttestation, CommitData, Rejection } from '../processors/types';
 
 /**
  * Class representing a Push.
@@ -39,7 +41,7 @@ class Action {
   rejected: boolean = false;
   autoApproved: boolean = false;
   autoRejected: boolean = false;
-  commitData?: Commit[] = [];
+  commitData?: CommitData[] = [];
   commitFrom?: string;
   commitTo?: string;
   branch?: string;
@@ -47,7 +49,8 @@ class Action {
   author?: string;
   user?: string;
   userEmail?: string;
-  attestation?: string;
+  attestation?: CompletedAttestation;
+  rejection?: Rejection;
   lastStep?: Step;
   proxyGitPath?: string;
   newIdxFiles?: string[];
@@ -61,7 +64,12 @@ class Action {
       keyData: Buffer;
     };
   };
-  pullAuthStrategy?: 'basic' | 'ssh-user-key' | 'ssh-service-token' | 'anonymous';
+  pullAuthStrategy?:
+    | 'basic'
+    | 'ssh-user-key'
+    | 'ssh-service-token'
+    | 'ssh-agent-forwarding'
+    | 'anonymous';
   encryptedSSHKey?: string;
   sshKeyExpiry?: Date;
 
@@ -121,7 +129,8 @@ class Action {
   }
 
   /**
-   * Set the commit range for the action.
+   * Set the commit range for the action. Changes the action.id to be based on
+   * the commit details.
    * @param {string} commitFrom the starting commit
    * @param {string} commitTo the ending commit
    */
