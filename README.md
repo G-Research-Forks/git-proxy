@@ -23,7 +23,7 @@
 
   <br />
 
-[![FINOS - Active](https://cdn.jsdelivr.net/gh/finos/contrib-toolbox@master/images/badge-active.svg)](https://community.finos.org/docs/governance/Software-Projects/stages/active)
+[![FINOS - Graduated](https://cdn.jsdelivr.net/gh/finos/contrib-toolbox@master/images/badge-graduated.svg)](https://community.finos.org/docs/governance/lifecycle-stages/graduated)
 [![NPM](https://img.shields.io/npm/v/@finos/git-proxy?colorA=00C586&colorB=000000)](https://www.npmjs.com/package/@finos/git-proxy)
 [![Build](https://img.shields.io/github/actions/workflow/status/finos/git-proxy/ci.yml?branch=main&label=CI&logo=github&colorA=00C586&colorB=000000)](https://github.com/finos/git-proxy/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/finos/git-proxy/branch/main/graph/badge.svg)](https://codecov.io/gh/finos/git-proxy)
@@ -68,11 +68,10 @@ $ npx -- @finos/git-proxy
 
 Clone a repository, set the remote to the GitProxy URL and push your changes:
 
+### Using HTTPS
+
 ```bash
-# Both HTTPS and SSH cloning are supported
 $ git clone https://github.com/octocat/Hello-World.git && cd Hello-World
-# Or use SSH:
-# $ git clone git@github.com:octocat/Hello-World.git && cd Hello-World
 # The below command is using the GitHub official CLI to fork the repo that is cloned.
 # You can also fork on the GitHub UI. For usage details on the CLI, see https://github.com/cli/cli
 $ gh repo fork
@@ -82,6 +81,25 @@ $ git remote add proxy http://localhost:8000/yourGithubUser/Hello-World.git
 # This fetches the repository's default branch and pushes it (https://stackoverflow.com/a/44750379).
 $ git push proxy $(git symbolic-ref refs/remotes/origin/HEAD | sed 's@^refs/remotes/origin/@@')
 ```
+
+### Using SSH
+
+```bash
+$ git clone https://github.com/octocat/Hello-World.git && cd Hello-World
+$ gh repo fork
+✓ Created fork yourGithubUser/Hello-World
+...
+# Configure Git remote for SSH proxy
+$ git remote add proxy ssh://git@localhost:2222/github.com/yourGithubUser/Hello-World.git
+# Enable SSH agent forwarding (required)
+$ git config core.sshCommand "ssh -A"
+# Push through the proxy
+$ git push proxy $(git symbolic-ref refs/remotes/origin/HEAD | sed 's@^refs/remotes/origin/@@')
+```
+
+📖 **Full SSH setup guide**: [docs/SSH_SETUP.md](docs/SSH_SETUP.md)
+
+---
 
 Using the default configuration, GitProxy intercepts the push and _blocks_ it. To enable code pushing to your fork via GitProxy, add your repository URL into the GitProxy config file (`proxy.config.json`). For more information, refer to [our documentation](https://git-proxy.finos.org).
 
@@ -99,9 +117,9 @@ GitProxy supports both **HTTP/HTTPS** and **SSH** protocols with identical secur
 ### SSH Support
 
 - ✅ SSH key-based authentication
+- ✅ SSH agent forwarding (uses client's SSH keys securely)
 - ✅ Pack data capture from SSH streams
-- ✅ Same 17-processor security chain as HTTPS
-- ✅ SSH key forwarding for approved pushes
+- ✅ Same 16-processor security chain as HTTPS
 - ✅ Complete feature parity with HTTPS
 
 Both protocols provide the same level of security scanning, including:
@@ -118,7 +136,7 @@ For detailed step-by-step instructions for how to install, deploy & configure Gi
 customize for your environment, see the [project's documentation](https://git-proxy.finos.org/docs/):
 
 - [Quickstart](https://git-proxy.finos.org/docs/category/quickstart/)
-- [Installation](https://git-proxy.finos.org/docs/installation)
+- [Installation](https://git-proxy.finos.org/docs/quickstart/installation)
 - [Configuration](https://git-proxy.finos.org/docs/category/configuration)
 - [Contributing](https://git-proxy.finos.org/docs/development/contributing)
 - [Testing](https://git-proxy.finos.org/docs/development/testing)

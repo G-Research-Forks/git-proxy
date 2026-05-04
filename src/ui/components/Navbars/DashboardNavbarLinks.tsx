@@ -1,3 +1,19 @@
+/**
+ * Copyright 2026 GitProxy Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 import React, { useEffect, useState } from 'react';
 import clsx from 'clsx';
 import { makeStyles } from '@material-ui/core/styles';
@@ -16,9 +32,8 @@ import { AccountCircle } from '@material-ui/icons';
 import { getUser } from '../../services/user';
 import axios from 'axios';
 import { getAxiosConfig } from '../../services/auth';
-import { UserData } from '../../../types/models';
-
-import { API_BASE } from '../../apiBase';
+import { PublicUser } from '../../../db/types';
+import { getBaseUrl } from '../../services/apiConfig';
 
 const useStyles = makeStyles(styles);
 
@@ -28,11 +43,10 @@ const DashboardNavbarLinks: React.FC = () => {
   const [openProfile, setOpenProfile] = useState<HTMLElement | null>(null);
   const [, setAuth] = useState<boolean>(true);
   const [, setIsLoading] = useState<boolean>(true);
-  const [, setIsError] = useState<boolean>(false);
-  const [data, setData] = useState<UserData | null>(null);
+  const [user, setUser] = useState<PublicUser | null>(null);
 
   useEffect(() => {
-    getUser(setIsLoading, setData, setAuth, setIsError);
+    getUser(setIsLoading, setUser, setAuth);
   }, []);
 
   const handleClickProfile = (event: React.MouseEvent<HTMLElement>) => {
@@ -53,14 +67,16 @@ const DashboardNavbarLinks: React.FC = () => {
 
   const logout = async () => {
     try {
-      const { data } = await axios.post(`${API_BASE}/api/auth/logout`, {}, getAxiosConfig());
+      const baseUrl = await getBaseUrl();
+      const { data } = await axios.post(`${baseUrl}/api/auth/logout`, {}, getAxiosConfig());
 
       if (!data.isAuth && !data.user) {
         setAuth(false);
         navigate(0);
       }
-    } catch (error) {
-      console.error('Logout failed:', error);
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error);
+      console.error('Logout failed:', msg);
     }
   };
 
@@ -99,10 +115,10 @@ const DashboardNavbarLinks: React.FC = () => {
                 <ClickAwayListener onClickAway={handleCloseProfile}>
                   <MenuList role='menu'>
                     <MenuItem onClick={showProfile} className={classes.dropdownItem}>
-                      {data ? 'My Account' : 'Login'}
+                      {user ? 'My Account' : 'Login'}
                     </MenuItem>
-                    {!!data && <Divider light />}
-                    {!!data && (
+                    {!!user && <Divider light />}
+                    {!!user && (
                       <MenuItem onClick={logout} className={classes.dropdownItem}>
                         Logout
                       </MenuItem>

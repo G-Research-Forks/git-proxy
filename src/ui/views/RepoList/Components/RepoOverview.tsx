@@ -1,3 +1,19 @@
+/**
+ * Copyright 2026 GitProxy Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 import React, { useEffect } from 'react';
 import { Snackbar, TableCell, TableRow } from '@material-ui/core';
 import GridContainer from '../../../components/Grid/GridContainer';
@@ -5,9 +21,13 @@ import GridItem from '../../../components/Grid/GridItem';
 import { CodeReviewIcon, LawIcon, PeopleIcon } from '@primer/octicons-react';
 import CodeActionButton from '../../../components/CustomButtons/CodeActionButton';
 import { languageColors } from '../../../../constants/languageColors';
-import { RepositoriesProps } from '../repositories.types';
+import { RepoView, SCMRepositoryMetadata } from '../../../types';
 import { fetchRemoteRepositoryData } from '../../../utils';
-import { SCMRepositoryMetadata } from '../../../../types/models';
+
+export interface RepositoriesProps {
+  repo: RepoView;
+  [key: string]: unknown;
+}
 
 const Repositories: React.FC<RepositoriesProps> = (props) => {
   const [remoteRepoData, setRemoteRepoData] = React.useState<SCMRepositoryMetadata | null>(null);
@@ -16,24 +36,24 @@ const Repositories: React.FC<RepositoriesProps> = (props) => {
 
   useEffect(() => {
     prepareRemoteRepositoryData();
-  }, [props.data.project, props.data.name, props.data.url]);
+  }, [props.repo.project, props.repo.name, props.repo.url]);
 
   const prepareRemoteRepositoryData = async () => {
     try {
-      const { url: remoteUrl } = props.data;
+      const { url: remoteUrl } = props.repo;
       if (!remoteUrl) return;
 
       setRemoteRepoData(
-        await fetchRemoteRepositoryData(props.data.project, props.data.name, remoteUrl),
+        await fetchRemoteRepositoryData(props.repo.project, props.repo.name, remoteUrl),
       );
-    } catch (error: any) {
-      console.warn(
-        `Unable to fetch repository data for ${props.data.project}/${props.data.name} from '${remoteUrl}' - this may occur if the project is private or from an SCM vendor that is not supported.`,
-      );
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error);
+      const errorMessage = `Unable to fetch repository data for ${props.repo.project}/${props.repo.name} from '${remoteUrl}' - this may occur if the project is private or from an SCM vendor that is not supported.`;
+      console.warn(errorMessage, msg);
     }
   };
 
-  const { url: remoteUrl, proxyURL } = props?.data || {};
+  const { url: remoteUrl, proxyURL } = props?.repo || {};
   const parsedUrl = new URL(remoteUrl);
   const cloneURL = `${proxyURL}/${parsedUrl.host}${parsedUrl.port ? `:${parsedUrl.port}` : ''}${parsedUrl.pathname}`;
 
@@ -41,9 +61,9 @@ const Repositories: React.FC<RepositoriesProps> = (props) => {
     <TableRow>
       <TableCell>
         <div style={{ padding: '15px' }}>
-          <a href={`/dashboard/repo/${props.data?._id}`}>
+          <a href={`/dashboard/repo/${props.repo._id}`}>
             <span style={{ fontSize: '17px' }}>
-              {props.data.project}/{props.data.name}
+              {props.repo.project}/{props.repo.name}
             </span>
           </a>
           {remoteRepoData?.parentName && (
@@ -93,12 +113,12 @@ const Repositories: React.FC<RepositoriesProps> = (props) => {
             )}
             <GridItem>
               <PeopleIcon size='small' />{' '}
-              <span style={{ marginLeft: '5px' }}>{props.data?.users?.canPush?.length || 0}</span>
+              <span style={{ marginLeft: '5px' }}>{props.repo?.users?.canPush?.length || 0}</span>
             </GridItem>
             <GridItem>
               <CodeReviewIcon size='small' />{' '}
               <span style={{ marginLeft: '5px' }}>
-                {props.data?.users?.canAuthorise?.length || 0}
+                {props.repo?.users?.canAuthorise?.length || 0}
               </span>
             </GridItem>
             {remoteRepoData?.lastUpdated && (

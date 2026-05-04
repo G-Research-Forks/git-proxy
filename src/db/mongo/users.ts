@@ -1,6 +1,22 @@
+/**
+ * Copyright 2026 GitProxy Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 import { OptionalId, Document, ObjectId } from 'mongodb';
 import { toClass } from '../helper';
-import { User } from '../types';
+import { User, UserQuery, PublicKeyRecord } from '../types';
 import { connect } from './helper';
 import _ from 'lodash';
 import { DuplicateSSHKeyError } from '../../errors/DatabaseErrors';
@@ -24,7 +40,7 @@ export const findUserByOIDC = async function (oidcId: string): Promise<User | nu
   return doc ? toClass(doc, User.prototype) : null;
 };
 
-export const getUsers = async function (query: any = {}): Promise<User[]> {
+export const getUsers = async function (query: Partial<UserQuery> = {}): Promise<User[]> {
   if (query.username) {
     query.username = query.username.toLowerCase();
   }
@@ -61,9 +77,6 @@ export const updateUser = async (user: Partial<User>): Promise<void> => {
   if (user.email) {
     user.email = user.email.toLowerCase();
   }
-  if (!user.publicKeys) {
-    user.publicKeys = [];
-  }
   const { _id, ...userWithoutId } = user;
   const filter = _id ? { _id: new ObjectId(_id) } : { username: user.username };
   const options = { upsert: true };
@@ -71,9 +84,9 @@ export const updateUser = async (user: Partial<User>): Promise<void> => {
   await collection.updateOne(filter, { $set: userWithoutId }, options);
 };
 
-export const addPublicKey = async (username: string, publicKey: string): Promise<void> => {
+export const addPublicKey = async (username: string, publicKey: PublicKeyRecord): Promise<void> => {
   // Check if this key already exists for any user
-  const existingUser = await findUserBySSHKey(publicKey);
+  const existingUser = await findUserBySSHKey(publicKey.key);
 
   if (existingUser && existingUser.username.toLowerCase() !== username.toLowerCase()) {
     throw new DuplicateSSHKeyError(existingUser.username);
@@ -81,22 +94,45 @@ export const addPublicKey = async (username: string, publicKey: string): Promise
 
   // Key doesn't exist for other users
   const collection = await connect(collectionName);
+
+  const user = await collection.findOne({ username: username.toLowerCase() });
+  if (!user) {
+    throw new Error('User not found');
+  }
+
+  const keyExists = user.publicKeys?.some(
+    (k: PublicKeyRecord) =>
+      k.key === publicKey.key || (k.fingerprint && k.fingerprint === publicKey.fingerprint),
+  );
+
+  if (keyExists) {
+    throw new Error('SSH key already exists');
+  }
+
   await collection.updateOne(
     { username: username.toLowerCase() },
-    { $addToSet: { publicKeys: publicKey } },
+    { $push: { publicKeys: publicKey } },
   );
 };
 
-export const removePublicKey = async (username: string, publicKey: string): Promise<void> => {
+export const removePublicKey = async (username: string, fingerprint: string): Promise<void> => {
   const collection = await connect(collectionName);
   await collection.updateOne(
     { username: username.toLowerCase() },
-    { $pull: { publicKeys: publicKey } },
+    { $pull: { publicKeys: { fingerprint: fingerprint } } },
   );
 };
 
 export const findUserBySSHKey = async function (sshKey: string): Promise<User | null> {
   const collection = await connect(collectionName);
-  const doc = await collection.findOne({ publicKeys: { $eq: sshKey } });
+  const doc = await collection.findOne({ 'publicKeys.key': { $eq: sshKey } });
   return doc ? toClass(doc, User.prototype) : null;
+};
+
+export const getPublicKeys = async (username: string): Promise<PublicKeyRecord[]> => {
+  const user = await findUser(username);
+  if (!user) {
+    throw new Error('User not found');
+  }
+  return user.publicKeys || [];
 };

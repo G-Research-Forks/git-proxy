@@ -1,15 +1,32 @@
+/**
+ * Copyright 2026 GitProxy Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 import React, { useEffect, useState } from 'react';
 import Dialog from '@material-ui/core/Dialog';
 import DialogContent from '@material-ui/core/DialogContent';
 import DialogActions from '@material-ui/core/DialogActions';
 import { CheckCircle, ErrorOutline } from '@material-ui/icons';
 import Button from '../../../components/CustomButtons/Button';
-import AttestationForm, { FormQuestion } from './AttestationForm';
+import AttestationForm from './AttestationForm';
 import {
   setAttestationConfigData,
   setURLShortenerData,
   setEmailContactData,
 } from '../../../services/config';
+import { QuestionFormData } from '../../../types';
 
 interface AttestationProps {
   approveFn: (data: { label: string; checked: boolean }[]) => void;
@@ -17,7 +34,7 @@ interface AttestationProps {
 
 const Attestation: React.FC<AttestationProps> = ({ approveFn }) => {
   const [open, setOpen] = useState(false);
-  const [formData, setFormData] = useState<FormQuestion[]>([]);
+  const [formData, setFormData] = useState<QuestionFormData[]>([]);
   const [urlShortener, setURLShortener] = useState<string>('');
   const [contactEmail, setContactEmail] = useState<string>('');
 
@@ -54,7 +71,7 @@ const Attestation: React.FC<AttestationProps> = ({ approveFn }) => {
 
   return (
     <div>
-      <Button color='success' onClick={handleClickOpen}>
+      <Button color='success' onClick={handleClickOpen} data-testid='attestation-open-btn'>
         Approve
       </Button>
       <Dialog
@@ -64,6 +81,7 @@ const Attestation: React.FC<AttestationProps> = ({ approveFn }) => {
         onClose={handleClose}
         aria-labelledby='alert-dialog-title'
         aria-describedby='alert-dialog-description'
+        data-testid='attestation-dialog'
         style={{ margin: '0px 15px 0px 15px', padding: '20px' }}
       >
         <span
@@ -93,7 +111,7 @@ const Attestation: React.FC<AttestationProps> = ({ approveFn }) => {
           <AttestationForm formData={formData} passFormData={setFormData} />
         </DialogContent>
         <DialogActions style={{ paddingTop: '15px', margin: '15px' }}>
-          <Button color='warning' onClick={handleClose}>
+          <Button color='warning' onClick={handleClose} data-testid='attestation-cancel-btn'>
             Cancel
           </Button>
           <Button
@@ -101,6 +119,7 @@ const Attestation: React.FC<AttestationProps> = ({ approveFn }) => {
             onClick={handleApprove}
             autoFocus
             disabled={!formData.every((question) => question.checked)}
+            data-testid='attestation-confirm-btn'
           >
             <CheckCircle /> Approve
           </Button>

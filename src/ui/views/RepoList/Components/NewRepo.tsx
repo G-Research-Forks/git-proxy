@@ -1,3 +1,19 @@
+/**
+ * Copyright 2026 GitProxy Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 import React, { useState } from 'react';
 import InputLabel from '@material-ui/core/InputLabel';
 import Input from '@material-ui/core/Input';
@@ -15,28 +31,16 @@ import { addRepo } from '../../../services/repo';
 import { makeStyles } from '@material-ui/core/styles';
 import styles from '../../../assets/jss/material-dashboard-react/views/dashboardStyle';
 import { RepoIcon } from '@primer/octicons-react';
+import { RepoView } from '../../../types';
 
 interface AddRepositoryDialogProps {
   open: boolean;
   onClose: () => void;
-  onSuccess: (data: RepositoryDataWithId) => void;
+  onSuccess: (repo: RepoView) => void;
 }
-
-export interface RepositoryData {
-  _id?: string;
-  project: string;
-  name: string;
-  url: string;
-  maxUser: number;
-  lastModified?: string;
-  dateCreated?: string;
-  proxyURL?: string;
-}
-
-export type RepositoryDataWithId = Required<Pick<RepositoryData, '_id'>> & RepositoryData;
 
 interface NewRepoProps {
-  onSuccess: (data: RepositoryDataWithId) => Promise<void>;
+  onSuccess: (repo: RepoView) => Promise<void>;
 }
 
 const useStyles = makeStyles(styles as any);
@@ -55,8 +59,8 @@ const AddRepositoryDialog: React.FC<AddRepositoryDialogProps> = ({ open, onClose
     onClose();
   };
 
-  const handleSuccess = (data: RepositoryDataWithId) => {
-    onSuccess(data);
+  const handleSuccess = (repo: RepoView) => {
+    onSuccess(repo);
     setTip(true);
   };
 
@@ -67,25 +71,26 @@ const AddRepositoryDialog: React.FC<AddRepositoryDialogProps> = ({ open, onClose
   };
 
   const add = async () => {
-    const data: RepositoryData = {
+    const repo: RepoView = {
       project: project.trim(),
       name: name.trim(),
       url: url.trim(),
-      maxUser: 1,
+      proxyURL: '',
+      users: { canPush: [], canAuthorise: [] },
     };
 
-    if (data.project.length === 0 || data.project.length > 100) {
+    if (repo.project.length === 0 || repo.project.length > 100) {
       setError('Project name length must be between 1 and 100 characters');
       return;
     }
 
-    if (data.name.length === 0 || data.name.length > 100) {
+    if (repo.name.length === 0 || repo.name.length > 100) {
       setError('Repository name length must be between 1 and 100 characters');
       return;
     }
 
     try {
-      const parsedUrl = new URL(data.url);
+      const parsedUrl = new URL(repo.url);
       if (!parsedUrl.pathname.endsWith('.git')) {
         setError('Invalid git URL - Git URLs should end with .git');
         return;
@@ -95,9 +100,9 @@ const AddRepositoryDialog: React.FC<AddRepositoryDialogProps> = ({ open, onClose
       return;
     }
 
-    const result = await addRepo(data);
-    if (result.success && result.repo) {
-      handleSuccess(result.repo);
+    const result = await addRepo(repo);
+    if (result.success && result.data) {
+      handleSuccess(result.data);
       handleClose();
     } else {
       setError(result.message || 'Failed to add repository');

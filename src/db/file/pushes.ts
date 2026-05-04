@@ -1,25 +1,42 @@
-import fs from 'fs';
+/**
+ * Copyright 2026 GitProxy Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 import _ from 'lodash';
 import Datastore from '@seald-io/nedb';
 import { Action } from '../../proxy/actions/Action';
 import { toClass } from '../helper';
 import { PushQuery } from '../types';
+import { CompletedAttestation, Rejection } from '../../proxy/processors/types';
+import { handleErrorAndLog } from '../../utils/errors';
 
 const COMPACTION_INTERVAL = 1000 * 60 * 60 * 24; // once per day
 
-// these don't get coverage in tests as they have already been run once before the test
-/* istanbul ignore if */
-if (!fs.existsSync('./.data')) fs.mkdirSync('./.data');
-/* istanbul ignore if */
-if (!fs.existsSync('./.data/db')) fs.mkdirSync('./.data/db');
-
-const db = new Datastore({ filename: './.data/db/pushes.db', autoload: true });
+// export for testing purposes
+export let db: Datastore;
+if (process.env.NODE_ENV === 'test') {
+  db = new Datastore({ inMemoryOnly: true, autoload: true });
+} else {
+  db = new Datastore({ filename: './.data/db/pushes.db', autoload: true });
+}
 try {
   db.ensureIndex({ fieldName: 'id', unique: true });
-} catch (e) {
-  console.error(
+} catch (error: unknown) {
+  handleErrorAndLog(
+    error,
     'Failed to build a unique index of push id values. Please check your database file for duplicate entries or delete the duplicate through the UI and restart. ',
-    e,
   );
 }
 db.setAutocompactionInterval(COMPACTION_INTERVAL);
@@ -35,19 +52,21 @@ const defaultPushQuery: Partial<PushQuery> = {
 export const getPushes = (query: Partial<PushQuery>): Promise<Action[]> => {
   if (!query) query = defaultPushQuery;
   return new Promise((resolve, reject) => {
-    db.find(query, (err: Error, docs: Action[]) => {
-      // ignore for code coverage as neDB rarely returns errors even for an invalid query
-      /* istanbul ignore if */
-      if (err) {
-        reject(err);
-      } else {
-        resolve(
-          _.chain(docs)
-            .map((x) => toClass(x, Action.prototype))
-            .value(),
-        );
-      }
-    });
+    db.find(query)
+      .sort({ timestamp: -1 })
+      .exec((err, docs) => {
+        // ignore for code coverage as neDB rarely returns errors even for an invalid query
+        /* istanbul ignore if */
+        if (err) {
+          reject(err);
+        } else {
+          resolve(
+            _.chain(docs)
+              .map((x) => toClass(x, Action.prototype))
+              .value(),
+          );
+        }
+      });
   });
 };
 
@@ -98,7 +117,10 @@ export const writeAudit = async (action: Action): Promise<void> => {
   });
 };
 
-export const authorise = async (id: string, attestation: any): Promise<{ message: string }> => {
+export const authorise = async (
+  id: string,
+  attestation?: CompletedAttestation,
+): Promise<{ message: string }> => {
   const action = await getPush(id);
   if (!action) {
     throw new Error(`push ${id} not found`);
@@ -112,7 +134,7 @@ export const authorise = async (id: string, attestation: any): Promise<{ message
   return { message: `authorised ${id}` };
 };
 
-export const reject = async (id: string, attestation: any): Promise<{ message: string }> => {
+export const reject = async (id: string, rejection: Rejection): Promise<{ message: string }> => {
   const action = await getPush(id);
   if (!action) {
     throw new Error(`push ${id} not found`);
@@ -121,7 +143,7 @@ export const reject = async (id: string, attestation: any): Promise<{ message: s
   action.authorised = false;
   action.canceled = false;
   action.rejected = true;
-  action.attestation = attestation;
+  action.rejection = rejection;
   await writeAudit(action);
   return { message: `reject ${id}` };
 };

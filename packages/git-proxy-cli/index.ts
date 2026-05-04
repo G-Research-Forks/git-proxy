@@ -1,23 +1,36 @@
 #!/usr/bin/env node
-import axios from 'axios';
+
+/**
+ * Copyright 2026 GitProxy Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+import axios, { isAxiosError } from 'axios';
 import yargs from 'yargs/yargs';
 import { hideBin } from 'yargs/helpers';
 import fs from 'fs';
 import util from 'util';
 
-import { CommitData, PushData } from '@finos/git-proxy/types';
 import { PushQuery } from '@finos/git-proxy/db';
-import { serverConfig } from '@finos/git-proxy/config/env';
-import {
-  ensureAuthCookie,
-  getCliCookies,
-  getCliPostRequestConfig,
-  GIT_PROXY_COOKIE_FILE,
-} from './utils';
+import { Action } from '@finos/git-proxy/proxy/actions';
+import { handleErrorAndLog } from '@finos/git-proxy/utils/errors';
 
+const GIT_PROXY_COOKIE_FILE = 'git-proxy-cookie';
 // GitProxy UI HOST and PORT (configurable via environment variable)
-const { GIT_PROXY_UI_HOST: uiHost = 'http://localhost' } = process.env;
-const { GIT_PROXY_UI_PORT: uiPort } = serverConfig;
+const { GIT_PROXY_UI_HOST: uiHost = 'http://localhost', GIT_PROXY_UI_PORT: uiPort = 8080 } =
+  process.env;
+
 const baseUrl = `${uiHost}:${uiPort}`;
 
 axios.defaults.timeout = 30000;
@@ -29,32 +42,35 @@ axios.defaults.timeout = 30000;
  */
 async function login(username: string, password: string) {
   try {
-    const config = await getCliPostRequestConfig(baseUrl);
     let response = await axios.post(
       `${baseUrl}/api/auth/login`,
       {
         username,
         password,
       },
-      config,
+      {
+        headers: { 'Content-Type': 'application/json' },
+        withCredentials: true,
+      },
     );
     const cookies = response.headers['set-cookie'];
-    fs.writeFileSync(GIT_PROXY_COOKIE_FILE, cookies ? cookies.join('; ') : '');
 
     response = await axios.get(`${baseUrl}/api/auth/profile`, {
       headers: { Cookie: cookies },
       withCredentials: true,
     });
 
+    fs.writeFileSync(GIT_PROXY_COOKIE_FILE, JSON.stringify(cookies), 'utf8');
+
     const user = `"${response.data.username}" <${response.data.email}>`;
     const isAdmin = response.data.admin ? ' (admin)' : '';
     console.log(`Login ${user}${isAdmin}: OK`);
-  } catch (error: any) {
-    if (error.response) {
+  } catch (error: unknown) {
+    if (isAxiosError(error) && error.response) {
       console.error(`Error: Login '${username}': '${error.response.status}'`);
       process.exitCode = 1;
     } else {
-      console.error(`Error: Login '${username}': '${error.message}'`);
+      handleErrorAndLog(error, `Error: Login '${username}'`);
       process.exitCode = 2;
     }
   }
@@ -82,76 +98,94 @@ async function login(username: string, password: string) {
  *          given attribute and status.
  */
 async function getGitPushes(filters: Partial<PushQuery>) {
-  if (!ensureAuthCookie()) return;
+  if (!fs.existsSync(GIT_PROXY_COOKIE_FILE)) {
+    console.error('Error: List: Authentication required');
+    process.exitCode = 1;
+    return;
+  }
+
   try {
-    const cookies = getCliCookies();
-    const response = await axios.get(`${baseUrl}/api/v1/push/`, {
+    const cookies = JSON.parse(fs.readFileSync(GIT_PROXY_COOKIE_FILE, 'utf8'));
+    const { data } = await axios.get<Action[]>(`${baseUrl}/api/v1/push/`, {
       headers: { Cookie: cookies },
       params: filters,
     });
 
-    const records: PushData[] = [];
-    response.data.forEach((push: PushData) => {
-      const record: PushData = {
-        id: push.id,
-        repo: push.repo,
-        branch: push.branch,
-        commitFrom: push.commitFrom,
-        commitTo: push.commitTo,
-        commitData: push.commitData,
-        diff: push.diff,
-        error: push.error,
-        canceled: push.canceled,
-        rejected: push.rejected,
-        blocked: push.blocked,
-        authorised: push.authorised,
-        attestation: push.attestation,
-        autoApproved: push.autoApproved,
-        timestamp: push.timestamp,
-        url: push.url,
-        allowPush: push.allowPush,
+    const records = data.map((push: Action) => {
+      const {
+        id,
+        repo,
+        branch,
+        commitFrom,
+        commitTo,
+        commitData,
+        error,
+        canceled,
+        rejected,
+        blocked,
+        authorised,
+        attestation,
+        autoApproved,
+        timestamp,
+        url,
+        allowPush,
+        lastStep,
+      } = push;
+
+      return {
+        id,
+        repo,
+        branch,
+        commitFrom,
+        commitTo,
+        commitData: commitData?.map(
+          ({
+            message,
+            committer,
+            committerEmail,
+            author,
+            authorEmail,
+            commitTimestamp,
+            tree,
+            parent,
+          }) => ({
+            message,
+            committer,
+            committerEmail,
+            author,
+            authorEmail,
+            commitTimestamp,
+            tree,
+            parent,
+          }),
+        ),
+        error,
+        canceled,
+        rejected,
+        blocked,
+        authorised,
+        attestation,
+        autoApproved,
+        timestamp,
+        url,
+        allowPush,
+        lastStep: lastStep && {
+          id: lastStep.id,
+          content: lastStep.content,
+          logs: lastStep.logs,
+          stepName: lastStep.stepName,
+          error: lastStep.error,
+          errorMessage: lastStep.errorMessage,
+          blocked: lastStep.blocked,
+          blockedMessage: lastStep.blockedMessage,
+        },
       };
-
-      if (push.lastStep) {
-        record.lastStep = {
-          id: push.lastStep?.id,
-          content: push.lastStep?.content,
-          logs: push.lastStep?.logs,
-          stepName: push.lastStep?.stepName,
-          error: push.lastStep?.error,
-          errorMessage: push.lastStep?.errorMessage,
-          blocked: push.lastStep?.blocked,
-          blockedMessage: push.lastStep?.blockedMessage,
-        };
-      }
-
-      if (push.commitData) {
-        const commitData: CommitData[] = [];
-        push.commitData.forEach((pushCommitDataRecord: CommitData) => {
-          commitData.push({
-            message: pushCommitDataRecord.message,
-            committer: pushCommitDataRecord.committer,
-            committerEmail: pushCommitDataRecord.committerEmail,
-            author: pushCommitDataRecord.author,
-            authorEmail: pushCommitDataRecord.authorEmail,
-            commitTimestamp: pushCommitDataRecord.commitTimestamp,
-            tree: pushCommitDataRecord.tree,
-            parent: pushCommitDataRecord.parent,
-            commitTs: pushCommitDataRecord.commitTs,
-          });
-        });
-        record.commitData = commitData;
-      }
-
-      records.push(record);
     });
 
-    console.log(`${util.inspect(records, false, null, false)}`);
-  } catch (error: any) {
-    // default error
-    const errorMessage = `Error: List: '${error.message}'`;
+    console.log(util.inspect(records, false, null, false));
+  } catch (error: unknown) {
+    handleErrorAndLog(error, 'Error: List');
     process.exitCode = 2;
-    console.error(errorMessage);
   }
 }
 
@@ -160,9 +194,15 @@ async function getGitPushes(filters: Partial<PushQuery>) {
  * @param {string} id The ID of the git push to authorise
  */
 async function authoriseGitPush(id: string) {
-  if (!ensureAuthCookie()) return;
+  if (!fs.existsSync(GIT_PROXY_COOKIE_FILE)) {
+    console.error('Error: Authorise: Authentication required');
+    process.exitCode = 1;
+    return;
+  }
+
   try {
-    const cookies = getCliCookies();
+    const cookies = JSON.parse(fs.readFileSync(GIT_PROXY_COOKIE_FILE, 'utf8'));
+
     await axios.get(`${baseUrl}/api/v1/push/${id}`, {
       headers: { Cookie: cookies },
     });
@@ -185,23 +225,28 @@ async function authoriseGitPush(id: string) {
     );
 
     console.log(`Authorise: ID: '${id}': OK`);
-  } catch (error: any) {
-    // default error
-    let errorMessage = `Error: Authorise: '${error.message}'`;
-    process.exitCode = 2;
-
-    if (error.response) {
+  } catch (error: unknown) {
+    if (isAxiosError(error) && error.response) {
       switch (error.response.status) {
         case 401:
-          errorMessage = `Error: Authorise: Authentication required: '${error.response.data.message}'`;
+        case 403:
+          console.error('Error: Authorise: Authentication required');
           process.exitCode = 3;
           break;
         case 404:
-          errorMessage = `Error: Authorise: ID: '${id}': Not Found`;
+          console.error(`Error: Authorise: ID: '${id}': Not Found`);
           process.exitCode = 4;
+          break;
+        default:
+          console.error(
+            `Error: Authorise: '${error.response.status}': ${error.response.data?.message || error.message}`,
+          );
+          process.exitCode = 5;
       }
+    } else {
+      handleErrorAndLog(error, `Error: Authorise: '${id}'`);
+      process.exitCode = 2;
     }
-    console.error(errorMessage);
   }
 }
 
@@ -209,40 +254,51 @@ async function authoriseGitPush(id: string) {
  * Reject git push by ID
  * @param {string} id The ID of the git push to reject
  */
-async function rejectGitPush(id: string) {
-  if (!ensureAuthCookie()) return;
+async function rejectGitPush(id: string, reason: string) {
+  if (!fs.existsSync(GIT_PROXY_COOKIE_FILE)) {
+    console.error('Error: Reject: Authentication required');
+    process.exitCode = 1;
+    return;
+  }
+
   try {
-    const cookies = getCliCookies();
+    const cookies = JSON.parse(fs.readFileSync(GIT_PROXY_COOKIE_FILE, 'utf8'));
+
     await axios.get(`${baseUrl}/api/v1/push/${id}`, {
       headers: { Cookie: cookies },
     });
 
     await axios.post(
       `${baseUrl}/api/v1/push/${id}/reject`,
-      {},
+      { reason },
       {
         headers: { Cookie: cookies },
       },
     );
 
     console.log(`Reject: ID: '${id}': OK`);
-  } catch (error: any) {
-    // default error
-    let errorMessage = `Error: Reject: '${error.message}'`;
-    process.exitCode = 2;
-
-    if (error.response) {
+  } catch (error: unknown) {
+    if (isAxiosError(error) && error.response) {
       switch (error.response.status) {
         case 401:
-          errorMessage = `Error: Reject: Authentication required: '${error.response.data.message}'`;
+        case 403:
+          console.error('Error: Reject: Authentication required');
           process.exitCode = 3;
           break;
         case 404:
-          errorMessage = `Error: Reject: ID: '${id}': Not Found`;
+          console.error(`Error: Reject: ID: '${id}': Not Found`);
           process.exitCode = 4;
+          break;
+        default:
+          console.error(
+            `Error: Reject: '${error.response.status}': ${error.response.data?.message || error.message}`,
+          );
+          process.exitCode = 5;
       }
+    } else {
+      handleErrorAndLog(error, `Error: Reject: '${id}'`);
+      process.exitCode = 2;
     }
-    console.error(errorMessage);
   }
 }
 
@@ -251,9 +307,15 @@ async function rejectGitPush(id: string) {
  * @param {string} id The ID of the git push to cancel
  */
 async function cancelGitPush(id: string) {
-  if (!ensureAuthCookie()) return;
+  if (!fs.existsSync(GIT_PROXY_COOKIE_FILE)) {
+    console.error('Error: Cancel: Authentication required');
+    process.exitCode = 1;
+    return;
+  }
+
   try {
-    const cookies = getCliCookies();
+    const cookies = JSON.parse(fs.readFileSync(GIT_PROXY_COOKIE_FILE, 'utf8'));
+
     await axios.get(`${baseUrl}/api/v1/push/${id}`, {
       headers: { Cookie: cookies },
     });
@@ -267,23 +329,28 @@ async function cancelGitPush(id: string) {
     );
 
     console.log(`Cancel: ID: '${id}': OK`);
-  } catch (error: any) {
-    // default error
-    let errorMessage = `Error: Cancel: '${error.message}'`;
-    process.exitCode = 2;
-
-    if (error.response) {
+  } catch (error: unknown) {
+    if (isAxiosError(error) && error.response) {
       switch (error.response.status) {
         case 401:
-          errorMessage = `Error: Cancel: Authentication required: '${error.response.data.message}'`;
+        case 403:
+          console.error('Error: Cancel: Authentication required');
           process.exitCode = 3;
           break;
         case 404:
-          errorMessage = `Error: Cancel: ID: '${id}': Not Found`;
+          console.error(`Error: Cancel: ID: '${id}': Not Found`);
           process.exitCode = 4;
+          break;
+        default:
+          console.error(
+            `Error: Cancel: '${error.response.status}': ${error.response.data?.message || error.message}`,
+          );
+          process.exitCode = 5;
       }
+    } else {
+      handleErrorAndLog(error, `Error: Cancel: '${id}'`);
+      process.exitCode = 2;
     }
-    console.error(errorMessage);
   }
 }
 
@@ -293,62 +360,108 @@ async function cancelGitPush(id: string) {
 async function logout() {
   if (fs.existsSync(GIT_PROXY_COOKIE_FILE)) {
     try {
-      const config = await getCliPostRequestConfig(baseUrl);
-      await axios.post(`${baseUrl}/api/auth/logout`, {}, config);
-
-      console.log('Logged out successfully.');
-    } catch (error: any) {
-      console.error(`Error: Logout: '${error.message}'`);
-      process.exitCode = 2;
-    } finally {
+      const cookies = JSON.parse(fs.readFileSync(GIT_PROXY_COOKIE_FILE, 'utf8'));
+      fs.writeFileSync(GIT_PROXY_COOKIE_FILE, '*** logged out ***', 'utf8');
       fs.unlinkSync(GIT_PROXY_COOKIE_FILE);
+
+      await axios.post(
+        `${baseUrl}/api/auth/logout`,
+        {},
+        {
+          headers: { Cookie: cookies },
+        },
+      );
+    } catch (error: unknown) {
+      handleErrorAndLog(error, 'Warning: Logout');
     }
-  } else {
-    console.error('Error: Logout: Not logged in.');
+  }
+
+  console.log('Logout: OK');
+}
+
+/**
+ * Reloads the GitProxy configuration without restarting the process
+ */
+async function reloadConfig() {
+  if (!fs.existsSync(GIT_PROXY_COOKIE_FILE)) {
+    console.error('Error: Reload config: Authentication required');
+    process.exitCode = 1;
+    return;
+  }
+
+  try {
+    const cookies = JSON.parse(fs.readFileSync(GIT_PROXY_COOKIE_FILE, 'utf8'));
+
+    await axios.post(`${baseUrl}/api/v1/admin/reload-config`, {}, { headers: { Cookie: cookies } });
+
+    console.log('Configuration reloaded successfully');
+  } catch (error: unknown) {
+    handleErrorAndLog(error, 'Error: Reload config');
     process.exitCode = 2;
   }
 }
 
 /**
- * Add SSH key for a user
- * @param {string} username The username to add the key for
- * @param {string} keyPath Path to the public key file
+ * Create a new user
+ * @param {string} username The username for the new user
+ * @param {string} password The password for the new user
+ * @param {string} email The email for the new user
+ * @param {string} gitAccount The git account for the new user
+ * @param {boolean} [admin=false] Whether the user should be an admin (optional)
  */
-async function addSSHKey(username: string, keyPath: string) {
-  if (!ensureAuthCookie()) return;
+async function createUser(
+  username: string,
+  password: string,
+  email: string,
+  gitAccount: string,
+  admin: boolean = false,
+) {
+  if (!fs.existsSync(GIT_PROXY_COOKIE_FILE)) {
+    console.error('Error: Create User: Authentication required');
+    process.exitCode = 1;
+    return;
+  }
+
   try {
-    const publicKey = fs.readFileSync(keyPath, 'utf8').trim();
-    const config = await getCliPostRequestConfig(baseUrl);
+    const cookies = JSON.parse(fs.readFileSync(GIT_PROXY_COOKIE_FILE, 'utf8'));
 
-    console.log('Adding SSH key', { username, publicKey });
-    await axios.post(`${baseUrl}/api/v1/user/${username}/ssh-keys`, { publicKey }, config);
+    await axios.post(
+      `${baseUrl}/api/auth/create-user`,
+      {
+        username,
+        password,
+        email,
+        gitAccount,
+        admin,
+      },
+      {
+        headers: { Cookie: cookies },
+      },
+    );
 
-    console.log(`SSH key added successfully for user ${username}`);
-  } catch (error: any) {
-    let errorMessage = `Error: SSH key: '${error.message}'`;
-    process.exitCode = 2;
-
-    if (error.response) {
+    console.log(`User '${username}' created successfully`);
+  } catch (error: unknown) {
+    if (isAxiosError(error) && error.response) {
       switch (error.response.status) {
         case 401:
-          errorMessage = `Error: SSH key: Authentication required: '${error.message}'`;
+        case 403:
+          console.error('Error: Create User: Authentication required');
           process.exitCode = 3;
           break;
-        case 404:
-          errorMessage = `Error: SSH key: User '${username}' not found`;
+        case 400:
+          console.error(`Error: Create User: ${error.response.data.message}`);
           process.exitCode = 4;
           break;
       }
-    } else if (error.code === 'ENOENT') {
-      errorMessage = `Error: SSH key: Could not find key file at ${keyPath}`;
-      process.exitCode = 5;
+    } else {
+      handleErrorAndLog(error, `Error: Create User: '${username}'`);
+      process.exitCode = 2;
     }
-    console.error(errorMessage);
   }
 }
 
 // Parsing command line arguments
-const argv = yargs(hideBin(process.argv))
+yargs(hideBin(process.argv)) // eslint-disable-line @typescript-eslint/no-unused-expressions
   .command({
     command: 'authorise',
     describe: 'Authorise git push by ID',
@@ -380,7 +493,7 @@ const argv = yargs(hideBin(process.argv))
   .command({
     command: 'config',
     describe: 'Print configuration',
-    handler(argv) {
+    handler() {
       console.log(`GitProxy URL: ${baseUrl}`);
     },
   })
@@ -406,7 +519,7 @@ const argv = yargs(hideBin(process.argv))
   .command({
     command: 'logout',
     describe: 'Log out',
-    handler(argv) {
+    handler() {
       logout();
     },
   })
@@ -472,40 +585,56 @@ const argv = yargs(hideBin(process.argv))
         demandOption: true,
         type: 'string',
       },
+      reason: {
+        describe: 'Reason for rejection',
+        type: 'string',
+        default: 'Rejected via GitProxy CLI',
+      },
     },
     handler(argv) {
-      rejectGitPush(argv.id);
+      rejectGitPush(argv.id, argv.reason);
     },
   })
   .command({
-    command: 'ssh-key',
-    describe: 'Manage SSH keys',
+    command: 'reload-config',
+    describe: 'Reload GitProxy configuration without restarting',
+    handler() {
+      reloadConfig();
+    },
+  })
+  .command({
+    command: 'create-user',
+    describe: 'Create a new user',
     builder: {
-      action: {
-        describe: 'Action to perform (add/remove)',
-        demandOption: true,
-        type: 'string',
-        choices: ['add', 'remove'],
-      },
       username: {
-        describe: 'Username to manage keys for',
+        describe: 'Username for the new user',
         demandOption: true,
         type: 'string',
       },
-      keyPath: {
-        describe: 'Path to the public key file',
+      password: {
+        describe: 'Password for the new user',
         demandOption: true,
         type: 'string',
+      },
+      email: {
+        describe: 'Email for the new user',
+        demandOption: true,
+        type: 'string',
+      },
+      gitAccount: {
+        describe: 'Git account for the new user',
+        demandOption: true,
+        type: 'string',
+      },
+      admin: {
+        describe: 'Whether the user should be an admin (optional)',
+        demandOption: false,
+        type: 'boolean',
+        default: false,
       },
     },
     handler(argv) {
-      if (argv.action === 'add') {
-        addSSHKey(argv.username, argv.keyPath);
-      } else if (argv.action === 'remove') {
-        // TODO: Implement remove SSH key
-        console.error('Error: SSH key: Remove action not implemented yet');
-        process.exitCode = 1;
-      }
+      createUser(argv.username, argv.password, argv.email, argv.gitAccount, argv.admin);
     },
   })
   .demandCommand(1, 'You need at least one command before moving on')

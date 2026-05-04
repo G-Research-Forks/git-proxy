@@ -1,3 +1,19 @@
+/**
+ * Copyright 2026 GitProxy Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 import React, { useState, useEffect } from 'react';
 import moment from 'moment';
 import { useNavigate, useParams } from 'react-router-dom';
@@ -8,109 +24,127 @@ import Card from '../../components/Card/Card';
 import CardIcon from '../../components/Card/CardIcon';
 import CardBody from '../../components/Card/CardBody';
 import CardHeader, { CardHeaderColor } from '../../components/Card/CardHeader';
-import CardFooter from '../../components/Card/CardFooter';
 import Button from '../../components/CustomButtons/Button';
+import CustomTabs from '../../components/CustomTabs/CustomTabs';
+import CommitDataTable from './components/CommitDataTable';
 import Diff from './components/Diff';
+import StepsTimeline from './components/StepsTimeline';
 import Attestation from './components/Attestation';
-import AttestationView from './components/AttestationView';
-import Table from '@material-ui/core/Table';
-import TableBody from '@material-ui/core/TableBody';
-import TableHead from '@material-ui/core/TableHead';
-import TableRow from '@material-ui/core/TableRow';
-import TableCell from '@material-ui/core/TableCell';
+import AttestationInfo from './components/AttestationInfo';
+import RejectionInfo from './components/RejectionInfo';
+import Reject from './components/Reject';
 import { getPush, authorisePush, rejectPush, cancelPush } from '../../services/git-push';
-import { CheckCircle, Visibility, Cancel, Block } from '@material-ui/icons';
+import type { ServiceResult } from '../../services/errors';
+import { CheckCircle, Visibility, Cancel, Block, List as ListIcon } from '@material-ui/icons';
+import CodeIcon from '@material-ui/icons/Code';
+import TimelineIcon from '@material-ui/icons/Timeline';
 import Snackbar from '@material-ui/core/Snackbar';
-import Tooltip from '@material-ui/core/Tooltip';
-import { PushData } from '../../../types/models';
+import { PushActionView } from '../../types';
 import { trimPrefixRefsHeads, trimTrailingDotGit } from '../../../db/helper';
-import { generateEmailLink, getGitProvider } from '../../utils';
-import UserLink from '../../components/UserLink/UserLink';
+import { getGitProvider } from '../../utils';
 
 const Dashboard: React.FC = () => {
   const { id } = useParams<{ id: string }>();
-  const [data, setData] = useState<PushData | null>(null);
-  const [, setAuth] = useState(true);
+  const [push, setPush] = useState<PushActionView | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isError, setIsError] = useState(false);
   const [message, setMessage] = useState('');
   const [attestation, setAttestation] = useState(false);
   const navigate = useNavigate();
 
-  let isUserAllowedToApprove = true;
-  let isUserAllowedToReject = true;
-
-  const setUserAllowedToApprove = (userAllowedToApprove: boolean) => {
-    isUserAllowedToApprove = userAllowedToApprove;
-    console.log('isUserAllowedToApprove:' + isUserAllowedToApprove);
-  };
-
-  const setUserAllowedToReject = (userAllowedToReject: boolean) => {
-    isUserAllowedToReject = userAllowedToReject;
-    console.log({ isUserAllowedToReject });
+  const handleActionFailure = (result: ServiceResult) => {
+    if (result.status === 401) {
+      navigate('/login', { replace: true });
+      return;
+    }
+    setMessage(result.message || 'Something went wrong...');
   };
 
   useEffect(() => {
-    if (id) {
-      getPush(id, setIsLoading, setData, setAuth, setIsError);
-    }
+    if (!id) return;
+    const load = async () => {
+      setIsLoading(true);
+      const result = await getPush(id);
+      if (result.success && result.data) {
+        setPush(result.data);
+      } else if (result.status === 401) {
+        setIsLoading(false);
+        navigate('/login', { replace: true });
+        return;
+      } else {
+        setIsError(true);
+        setMessage(result.message || 'Something went wrong...');
+      }
+      setIsLoading(false);
+    };
+    load();
   }, [id]);
 
   const authorise = async (attestationData: Array<{ label: string; checked: boolean }>) => {
     if (!id) return;
-    await authorisePush(id, setMessage, setUserAllowedToApprove, attestationData);
-    if (isUserAllowedToApprove) {
+    const result = await authorisePush(id, attestationData);
+    if (result.success) {
       navigate('/dashboard/push/');
+      return;
     }
+    handleActionFailure(result);
   };
 
-  const reject = async () => {
+  const reject = async (reason: string) => {
     if (!id) return;
-    await rejectPush(id, setMessage, setUserAllowedToReject);
-    if (isUserAllowedToReject) {
+    const result = await rejectPush(id, reason);
+    if (result.success) {
       navigate('/dashboard/push/');
+      return;
     }
+    handleActionFailure(result);
   };
 
   const cancel = async () => {
     if (!id) return;
-    await cancelPush(id, setAuth, setIsError);
-    navigate(`/dashboard/push/`);
+    const result = await cancelPush(id);
+    if (result.success) {
+      navigate(`/dashboard/push/`);
+      return;
+    }
+    handleActionFailure(result);
   };
 
   if (isLoading) return <div>Loading...</div>;
-  if (isError) return <div>Something went wrong ...</div>;
-  if (!data) return <div>No data found</div>;
+  if (isError) throw new Error(message || 'Something went wrong ...');
+  if (!push) return <div>No push data found</div>;
+
+  const errorCount = push.steps?.filter((step) => step.error).length ?? 0;
 
   let headerData: { title: string; color: CardHeaderColor } = {
     title: 'Pending',
     color: 'warning',
   };
 
-  if (data.canceled) {
+  if (push.canceled) {
     headerData = {
       color: 'warning',
       title: 'Canceled',
     };
   }
 
-  if (data.rejected) {
+  if (push.rejected) {
     headerData = {
       color: 'danger',
       title: 'Rejected',
     };
   }
 
-  if (data.authorised) {
+  if (push.authorised) {
     headerData = {
       color: 'success',
       title: 'Approved',
     };
   }
 
-  const repoFullName = trimTrailingDotGit(data.repo);
-  const repoBranch = trimPrefixRefsHeads(data.branch);
-  const repoUrl = data.url;
+  const repoFullName = trimTrailingDotGit(push.repo);
+  const repoBranch = trimPrefixRefsHeads(push.branch ?? '');
+  const repoUrl = push.url;
   const repoWebUrl = trimTrailingDotGit(repoUrl);
   const gitProvider = getGitProvider(repoUrl);
   const isGitHub = gitProvider == 'github';
@@ -148,114 +182,40 @@ const Dashboard: React.FC = () => {
             <CardHeader color={headerData.color} stats icon>
               <CardIcon color={headerData.color}>
                 {generateIcon(headerData.title)}
-                <h3>{headerData.title}</h3>
+                <h3 data-testid='push-status'>{headerData.title}</h3>
               </CardIcon>
-              {!(data.canceled || data.rejected || data.authorised) && (
+              {!(push.canceled || push.rejected || push.authorised) && (
                 <div style={{ display: 'inline-flex', padding: '20px' }}>
-                  <Button color='warning' onClick={cancel}>
+                  <Button color='warning' onClick={cancel} data-testid='push-cancel-btn'>
                     Cancel
                   </Button>
-                  <Button color='danger' onClick={reject}>
-                    Reject
-                  </Button>
+                  <Reject rejectFn={reject} />
                   <Attestation approveFn={authorise} />
                 </div>
               )}
-              {data.attestation && data.authorised && (
-                <div
-                  style={{
-                    background: '#eee',
-                    padding: '10px 20px 10px 20px',
-                    borderRadius: '10px',
-                    color: 'black',
-                    marginTop: '15px',
-                    float: 'right',
-                    position: 'relative',
-                    textAlign: 'left',
-                  }}
-                >
-                  <span style={{ position: 'absolute', top: 0, right: 0 }}>
-                    <CheckCircle
-                      style={{
-                        cursor: data.autoApproved ? 'default' : 'pointer',
-                        transform: 'scale(0.65)',
-                        opacity: data.autoApproved ? 0.5 : 1,
-                      }}
-                      onClick={() => {
-                        if (!data.autoApproved) {
-                          setAttestation(true);
-                        }
-                      }}
-                      htmlColor='green'
-                    />
-                  </span>
-
-                  {data.autoApproved ? (
-                    <div style={{ paddingTop: '15px' }}>
-                      <p>
-                        <strong>Auto-approved by system</strong>
-                      </p>
-                    </div>
-                  ) : (
-                    <>
-                      {isGitHub && (
-                        <UserLink username={data.attestation.reviewer.username}>
-                          <img
-                            style={{ width: '45px', borderRadius: '20px' }}
-                            src={`https://github.com/${data.attestation.reviewer.gitAccount}.png`}
-                          />
-                        </UserLink>
-                      )}
-                      <div>
-                        <p>
-                          {isGitHub && (
-                            <UserLink username={data.attestation.reviewer.username}>
-                              {data.attestation.reviewer.gitAccount}
-                            </UserLink>
-                          )}
-                          {!isGitHub && <UserLink username={data.attestation.reviewer.username} />}{' '}
-                          approved this contribution
-                        </p>
-                      </div>
-                    </>
-                  )}
-
-                  <Tooltip
-                    title={moment(data.attestation.timestamp).format(
-                      'dddd, MMMM Do YYYY, h:mm:ss a',
-                    )}
-                    arrow
-                  >
-                    <kbd style={{ color: 'black', float: 'right' }}>
-                      {moment(data.attestation.timestamp).fromNow()}
-                    </kbd>
-                  </Tooltip>
-
-                  {!data.autoApproved && (
-                    <AttestationView
-                      data={data.attestation}
-                      attestation={attestation}
-                      setAttestation={setAttestation}
-                    />
-                  )}
-                </div>
-              )}
+              <AttestationInfo
+                push={push}
+                isGitHub={isGitHub}
+                attestation={attestation}
+                setAttestation={setAttestation}
+              />
+              <RejectionInfo push={push} />
             </CardHeader>
             <CardBody>
               <GridContainer>
                 <GridItem xs={2} sm={2} md={2}>
                   <h3>Timestamp</h3>
-                  <p>{moment(data.timestamp).toString()}</p>
+                  <p>{moment(push.timestamp).toString()}</p>
                 </GridItem>
                 <GridItem xs={3} sm={3} md={3}>
                   <h3>Remote Head</h3>
                   <p>
                     <a
-                      href={`${repoWebUrl}/commit/${data.commitFrom}`}
+                      href={`${repoWebUrl}/commit/${push.commitFrom}`}
                       rel='noreferrer'
                       target='_blank'
                     >
-                      {data.commitFrom}
+                      {push.commitFrom}
                     </a>
                   </p>
                 </GridItem>
@@ -263,11 +223,11 @@ const Dashboard: React.FC = () => {
                   <h3>Commit SHA</h3>
                   <p>
                     <a
-                      href={`${repoWebUrl}/commit/${data.commitTo}`}
+                      href={`${repoWebUrl}/commit/${push.commitTo}`}
                       rel='noreferrer'
                       target='_blank'
                     >
-                      {data.commitTo}
+                      {push.commitTo}
                     </a>
                   </p>
                 </GridItem>
@@ -290,44 +250,29 @@ const Dashboard: React.FC = () => {
               </GridContainer>
             </CardBody>
           </Card>
-          <Card>
-            <CardHeader color={headerData.color} stats icon>
-              <h3>{headerData.title}</h3>
-            </CardHeader>
-            <CardBody>
-              <Table>
-                <TableHead>
-                  <TableRow>
-                    <TableCell>Timestamp</TableCell>
-                    <TableCell>Committer</TableCell>
-                    <TableCell>Author</TableCell>
-                    <TableCell>Message</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {data.commitData.map((c) => (
-                    <TableRow key={c.commitTimestamp || c.commitTs}>
-                      <TableCell>
-                        {moment.unix(c.commitTs || c.commitTimestamp || 0).toString()}
-                      </TableCell>
-                      <TableCell>{generateEmailLink(c.committer, c.committerEmail)}</TableCell>
-                      <TableCell>{generateEmailLink(c.author, c.authorEmail)}</TableCell>
-                      <TableCell>{c.message}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </CardBody>
-          </Card>
         </GridItem>
         <GridItem xs={12} sm={12} md={12}>
-          <Card>
-            <CardHeader />
-            <CardBody>
-              <Diff diff={data.diff.content} />
-            </CardBody>
-            <CardFooter />
-          </Card>
+          <CustomTabs
+            headerColor='primary'
+            tabs={[
+              {
+                tabName: 'Commits',
+                tabIcon: ListIcon,
+                tabContent: <CommitDataTable commitData={push.commitData || []} />,
+              },
+              {
+                tabName: 'Changes',
+                tabIcon: CodeIcon,
+                tabContent: <Diff diff={push.diff?.content || ''} />,
+              },
+              {
+                tabName: 'Steps',
+                tabIcon: TimelineIcon,
+                tabContent: <StepsTimeline steps={push.steps ?? []} />,
+                badge: errorCount > 0 ? errorCount : undefined,
+              },
+            ]}
+          />
         </GridItem>
       </GridContainer>
     </div>
