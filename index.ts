@@ -1,13 +1,29 @@
 #!/usr/bin/env tsx
 
+/**
+ * Copyright 2026 GitProxy Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 import path from 'path';
 import yargs from 'yargs';
 import { hideBin } from 'yargs/helpers';
 import * as fs from 'fs';
-import { configFile, setConfigFile, validate } from './src/config/file';
+import { getConfigFile, setConfigFile, validate } from './src/config/file';
 import { initUserConfig } from './src/config';
-import Proxy from './src/proxy';
-import service from './src/service';
+import { Proxy } from './src/proxy';
+import { Service } from './src/service';
 
 const argv = yargs(hideBin(process.argv))
   .usage('Usage: $0 [options]')
@@ -30,9 +46,11 @@ const argv = yargs(hideBin(process.argv))
   .strict()
   .parseSync();
 
+console.log('Setting config file to: ' + (argv.c as string) || '');
 setConfigFile((argv.c as string) || '');
 initUserConfig();
 
+const configFile = getConfigFile();
 if (argv.v) {
   if (!fs.existsSync(configFile)) {
     console.error(
@@ -46,10 +64,14 @@ if (argv.v) {
   process.exit(0);
 }
 
+console.log('Validating config');
 validate();
 
+console.log('Setting up the proxy and Service');
+
+// The deferred imports should cause these to be loaded on first access
 const proxy = new Proxy();
 proxy.start();
-service.start(proxy);
+Service.start(proxy);
 
-export { proxy, service };
+export { proxy, Service };

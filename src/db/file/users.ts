@@ -1,8 +1,25 @@
+/**
+ * Copyright 2026 GitProxy Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 import fs from 'fs';
 import Datastore from '@seald-io/nedb';
 
-import { User, UserQuery } from '../types';
+import { User, UserQuery, PublicKeyRecord } from '../types';
 import { DuplicateSSHKeyError, UserNotFoundError } from '../../errors/DatabaseErrors';
+import { handleErrorAndLog } from '../../utils/errors';
 
 const COMPACTION_INTERVAL = 1000 * 60 * 60 * 24; // once per day
 
@@ -12,23 +29,29 @@ if (!fs.existsSync('./.data')) fs.mkdirSync('./.data');
 /* istanbul ignore if */
 if (!fs.existsSync('./.data/db')) fs.mkdirSync('./.data/db');
 
-const db = new Datastore({ filename: './.data/db/users.db', autoload: true });
+// export for testing purposes
+export let db: Datastore;
+if (process.env.NODE_ENV === 'test') {
+  db = new Datastore({ inMemoryOnly: true, autoload: true });
+} else {
+  db = new Datastore({ filename: './.data/db/users.db', autoload: true });
+}
 
 // Using a unique constraint with the index
 try {
   db.ensureIndex({ fieldName: 'username', unique: true });
-} catch (e) {
-  console.error(
+} catch (error: unknown) {
+  handleErrorAndLog(
+    error,
     'Failed to build a unique index of usernames. Please check your database file for duplicate entries or delete the duplicate through the UI and restart. ',
-    e,
   );
 }
 try {
   db.ensureIndex({ fieldName: 'email', unique: true });
-} catch (e) {
-  console.error(
+} catch (error: unknown) {
+  handleErrorAndLog(
+    error,
     'Failed to build a unique index of user email addresses. Please check your database file for duplicate entries or delete the duplicate through the UI and restart. ',
-    e,
   );
 }
 db.setAutocompactionInterval(COMPACTION_INTERVAL);
@@ -181,10 +204,10 @@ export const getUsers = (query: Partial<UserQuery> = {}): Promise<User[]> => {
   });
 };
 
-export const addPublicKey = (username: string, publicKey: string): Promise<void> => {
+export const addPublicKey = (username: string, publicKey: PublicKeyRecord): Promise<void> => {
   return new Promise((resolve, reject) => {
     // Check if this key already exists for any user
-    findUserBySSHKey(publicKey)
+    findUserBySSHKey(publicKey.key)
       .then((existingUser) => {
         if (existingUser && existingUser.username.toLowerCase() !== username.toLowerCase()) {
           reject(new DuplicateSSHKeyError(existingUser.username));
@@ -202,20 +225,28 @@ export const addPublicKey = (username: string, publicKey: string): Promise<void>
         if (!user.publicKeys) {
           user.publicKeys = [];
         }
-        if (!user.publicKeys.includes(publicKey)) {
-          user.publicKeys.push(publicKey);
-          updateUser(user)
-            .then(() => resolve())
-            .catch(reject);
-        } else {
-          resolve();
+
+        // Check if key already exists (by key content or fingerprint)
+        const keyExists = user.publicKeys.some(
+          (k) =>
+            k.key === publicKey.key || (k.fingerprint && k.fingerprint === publicKey.fingerprint),
+        );
+
+        if (keyExists) {
+          reject(new Error('SSH key already exists'));
+          return;
         }
+
+        user.publicKeys.push(publicKey);
+        updateUser(user)
+          .then(() => resolve())
+          .catch(reject);
       })
       .catch(reject);
   });
 };
 
-export const removePublicKey = (username: string, publicKey: string): Promise<void> => {
+export const removePublicKey = (username: string, fingerprint: string): Promise<void> => {
   return new Promise((resolve, reject) => {
     findUser(username)
       .then((user) => {
@@ -228,7 +259,7 @@ export const removePublicKey = (username: string, publicKey: string): Promise<vo
           resolve();
           return;
         }
-        user.publicKeys = user.publicKeys.filter((key) => key !== publicKey);
+        user.publicKeys = user.publicKeys.filter((k) => k.fingerprint !== fingerprint);
         updateUser(user)
           .then(() => resolve())
           .catch(reject);
@@ -239,7 +270,7 @@ export const removePublicKey = (username: string, publicKey: string): Promise<vo
 
 export const findUserBySSHKey = (sshKey: string): Promise<User | null> => {
   return new Promise<User | null>((resolve, reject) => {
-    db.findOne({ publicKeys: sshKey }, (err: Error | null, doc: User) => {
+    db.findOne({ 'publicKeys.key': sshKey }, (err: Error | null, doc: User) => {
       // ignore for code coverage as neDB rarely returns errors even for an invalid query
       /* istanbul ignore if */
       if (err) {
@@ -252,5 +283,14 @@ export const findUserBySSHKey = (sshKey: string): Promise<User | null> => {
         }
       }
     });
+  });
+};
+
+export const getPublicKeys = (username: string): Promise<PublicKeyRecord[]> => {
+  return findUser(username).then((user) => {
+    if (!user) {
+      throw new Error('User not found');
+    }
+    return user.publicKeys || [];
   });
 };

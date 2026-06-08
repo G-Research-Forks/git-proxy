@@ -1,11 +1,29 @@
-import { Action, Step } from '../../actions';
-import { getCommitConfig } from '../../../config';
-import { Commit } from '../../actions/Action';
+/**
+ * Copyright 2026 GitProxy Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+import { Request } from 'express';
 import { isEmail } from 'validator';
 
-const commitConfig = getCommitConfig();
+import { Action, Step } from '../../actions';
+import { getCommitConfig } from '../../../config';
+import { CommitData } from '../types';
 
 const isEmailAllowed = (email: string): boolean => {
+  const commitConfig = getCommitConfig();
+
   if (!email || !isEmail(email)) {
     return false;
   }
@@ -14,14 +32,14 @@ const isEmailAllowed = (email: string): boolean => {
 
   if (
     commitConfig?.author?.email?.domain?.allow &&
-    !new RegExp(commitConfig.author.email.domain.allow, 'g').test(emailDomain)
+    !new RegExp(commitConfig.author.email.domain.allow, 'gi').test(emailDomain)
   ) {
     return false;
   }
 
   if (
     commitConfig?.author?.email?.local?.block &&
-    new RegExp(commitConfig.author.email.local.block, 'g').test(emailLocal)
+    new RegExp(commitConfig.author.email.local.block, 'gi').test(emailLocal)
   ) {
     return false;
   }
@@ -29,23 +47,16 @@ const isEmailAllowed = (email: string): boolean => {
   return true;
 };
 
-const exec = async (req: any, action: Action): Promise<Action> => {
+const exec = async (_req: Request, action: Action): Promise<Action> => {
   const step = new Step('checkAuthorEmails');
 
   const uniqueAuthorEmails = [
-    ...new Set(action.commitData?.map((commit: Commit) => commit.authorEmail)),
+    ...new Set(action.commitData?.map((commitData: CommitData) => commitData.authorEmail)),
   ];
-  console.log({ uniqueAuthorEmails });
 
   const illegalEmails = uniqueAuthorEmails.filter((email) => !isEmailAllowed(email));
-  console.log({ illegalEmails });
 
-  const usingIllegalEmails = illegalEmails.length > 0;
-  console.log({ usingIllegalEmails });
-
-  if (usingIllegalEmails) {
-    console.log(`The following commit author e-mails are illegal: ${illegalEmails}`);
-
+  if (illegalEmails.length > 0) {
     step.error = true;
     step.log(`The following commit author e-mails are illegal: ${illegalEmails}`);
     step.setError(
@@ -56,7 +67,7 @@ const exec = async (req: any, action: Action): Promise<Action> => {
     return action;
   }
 
-  console.log(`The following commit author e-mails are legal: ${uniqueAuthorEmails}`);
+  step.log(`The following commit author e-mails are legal: ${uniqueAuthorEmails}`);
   action.addStep(step);
   return action;
 };

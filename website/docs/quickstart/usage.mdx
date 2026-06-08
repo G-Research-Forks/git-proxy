@@ -1,0 +1,36 @@
+---
+title: Usage
+description: How to run GitProxy using npm or npx
+---
+
+### Run from global install
+
+Once you have followed the [installation](installation) steps, run:
+
+```bash
+git-proxy
+```
+
+To run GitProxy using the CLI:
+
+```bash
+git-proxy-cli
+```
+
+### Using [npx instead of npm](https://www.freecodecamp.org/news/npm-vs-npx-whats-the-difference/)
+
+You can also install & run `git-proxy` and `git-proxy-cli` in two steps:
+
+```bash
+npx -- @finos/git-proxy
+```
+
+```bash
+npx -- @finos/git-proxy-cli
+```
+
+If you use a proxy server to access `npm` then please note that you also need to configure your proxy for `npx` before running the above commands:
+
+```bash
+npx config set https-proxy <company-proxy-endpoint>
+```

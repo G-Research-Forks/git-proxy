@@ -1,3 +1,19 @@
+/**
+ * Copyright 2026 GitProxy Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 import React, { useState, useEffect } from 'react';
 import InputLabel from '@material-ui/core/InputLabel';
 import FormControl from '@material-ui/core/FormControl';
@@ -16,7 +32,7 @@ import Snackbar from '@material-ui/core/Snackbar';
 import { addUser } from '../../../services/repo';
 import { getUsers } from '../../../services/user';
 import { PersonAdd } from '@material-ui/icons';
-import { UserData } from '../../../../types/models';
+import { PublicUser } from '../../../../db/types';
 import Danger from '../../../components/Typography/Danger';
 
 interface AddUserDialogProps {
@@ -35,7 +51,7 @@ const AddUserDialog: React.FC<AddUserDialogProps> = ({
   onClose,
 }) => {
   const [username, setUsername] = useState<string>('');
-  const [data, setData] = useState<UserData[]>([]);
+  const [users, setUsers] = useState<PublicUser[]>([]);
   const [, setAuth] = useState<boolean>(true);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string>('');
@@ -62,13 +78,10 @@ const AddUserDialog: React.FC<AddUserDialogProps> = ({
       await addUser(repoId, username, type);
       handleSuccess();
       handleClose();
-    } catch (e) {
+    } catch (error: unknown) {
       setIsLoading(false);
-      if (e instanceof Error) {
-        setError(e.message);
-      } else {
-        setError('An unknown error occurred');
-      }
+      const msg = error instanceof Error ? error.message : String(error);
+      setError(`Error adding user: ${msg}`);
     }
   };
 
@@ -77,7 +90,7 @@ const AddUserDialog: React.FC<AddUserDialogProps> = ({
   };
 
   useEffect(() => {
-    getUsers(setIsLoading, setData, setAuth, setErrorMessage);
+    getUsers(setIsLoading, setUsers, setAuth, setErrorMessage);
   }, []);
 
   if (errorMessage) return <Danger>{errorMessage}</Danger>;
@@ -119,9 +132,9 @@ const AddUserDialog: React.FC<AddUserDialogProps> = ({
                     onChange={handleChange}
                     disabled={isLoading}
                   >
-                    {data.map((row) => (
-                      <MenuItem key={row.username} value={row.username}>
-                        {row.username} / {row.gitAccount}
+                    {users.map((user) => (
+                      <MenuItem key={user.username} value={user.username}>
+                        {user.username} / {user.gitAccount}
                       </MenuItem>
                     ))}
                   </Select>

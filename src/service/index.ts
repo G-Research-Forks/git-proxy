@@ -1,6 +1,24 @@
+/**
+ * Copyright 2026 GitProxy Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 import express, { Express } from 'express';
 import session from 'express-session';
 import http from 'http';
+import https from 'https';
+import fs from 'fs';
 import cors from 'cors';
 import path from 'path';
 import rateLimit from 'express-rate-limit';
@@ -8,23 +26,107 @@ import lusca from 'lusca';
 
 import * as config from '../config';
 import * as db from '../db';
-import { serverConfig } from '../config/env';
-import Proxy from '../proxy';
+import { Proxy } from '../proxy';
 import routes from './routes';
 import { configure } from './passport';
 
 const limiter = rateLimit(config.getRateLimit());
 
-const { GIT_PROXY_UI_PORT: uiPort } = serverConfig;
-
-const DEFAULT_SESSION_MAX_AGE_HOURS = 12;
-
 const app: Express = express();
-const _httpServer = http.createServer(app);
+let _httpServer: http.Server | null = null;
+let _httpsServer: https.Server | null = null;
 
-const corsOptions = {
-  credentials: true,
-  origin: true,
+const getServiceTLSOptions = () => ({
+  key:
+    config.getTLSEnabled() && config.getTLSKeyPemPath()
+      ? fs.readFileSync(config.getTLSKeyPemPath()!)
+      : undefined,
+  cert:
+    config.getTLSEnabled() && config.getTLSCertPemPath()
+      ? fs.readFileSync(config.getTLSCertPemPath()!)
+      : undefined,
+});
+
+/**
+ * CORS Configuration
+ *
+ * Environment Variable: ALLOWED_ORIGINS
+ *
+ * Configuration Options:
+ * 1. Production (restrictive): ALLOWED_ORIGINS='https://gitproxy.company.com,https://gitproxy-staging.company.com'
+ * 2. Development (permissive): ALLOWED_ORIGINS='*'
+ * 3. Local dev with Vite: ALLOWED_ORIGINS='http://localhost:3000'
+ * 4. Same-origin only: Leave ALLOWED_ORIGINS unset or empty
+ *
+ * Examples:
+ * - Single origin: ALLOWED_ORIGINS='https://example.com'
+ * - Multiple origins: ALLOWED_ORIGINS='http://localhost:3000,https://example.com'
+ * - All origins (testing): ALLOWED_ORIGINS='*'
+ * - Same-origin only: ALLOWED_ORIGINS='' or unset
+ */
+
+/**
+ * Parse ALLOWED_ORIGINS environment variable
+ * Supports:
+ * - '*' for all origins
+ * - Comma-separated list of origins: 'http://localhost:3000,https://example.com'
+ * - Empty/undefined for same-origin only
+ */
+function getAllowedOrigins(): string[] | '*' | undefined {
+  const allowedOrigins = process.env.ALLOWED_ORIGINS;
+
+  if (!allowedOrigins) {
+    return undefined; // No CORS, same-origin only
+  }
+
+  if (allowedOrigins === '*') {
+    return '*'; // Allow all origins
+  }
+
+  // Parse comma-separated list
+  return allowedOrigins
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+}
+
+/**
+ * CORS origin callback - determines if origin is allowed
+ */
+function corsOriginCallback(
+  origin: string | undefined,
+  callback: (err: Error | null, allow?: boolean) => void,
+) {
+  const allowedOrigins = getAllowedOrigins();
+
+  // Allow all origins
+  if (allowedOrigins === '*') {
+    return callback(null, true);
+  }
+
+  // No ALLOWED_ORIGINS set - only allow same-origin (no origin header)
+  if (!allowedOrigins) {
+    if (!origin) {
+      return callback(null, true); // Same-origin requests don't have origin header
+    }
+    return callback(null, false);
+  }
+
+  // Check if origin is in the allowed list
+  if (!origin || allowedOrigins.includes(origin)) {
+    return callback(null, true);
+  }
+
+  callback(new Error('Not allowed by CORS'));
+}
+
+const corsOptions: cors.CorsOptions = {
+  origin: corsOriginCallback,
+  credentials: true, // Allow credentials (cookies, authorization headers)
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'X-CSRF-TOKEN'],
+  exposedHeaders: ['Set-Cookie'],
+  maxAge: 86400, // 24 hours
 };
 
 /**
@@ -44,13 +146,13 @@ async function createApp(proxy: Proxy): Promise<Express> {
   app.use(
     session({
       store: db.getSessionStore(),
-      secret: config.getCookieSecret() as string,
+      secret: config.getCookieSecret(),
       resave: false,
       saveUninitialized: false,
       cookie: {
         secure: 'auto',
         httpOnly: true,
-        maxAge: (config.getSessionMaxAgeHours() || DEFAULT_SESSION_MAX_AGE_HOURS) * 60 * 60 * 1000,
+        maxAge: config.getSessionMaxAgeHours() * 60 * 60 * 1000,
       },
     }),
   );
@@ -74,7 +176,7 @@ async function createApp(proxy: Proxy): Promise<Express> {
   app.use(express.urlencoded({ extended: true }));
   app.use('/', routes(proxy));
   app.use('/', express.static(absBuildPath));
-  app.get('/*', (req, res) => {
+  app.get('/*path', (_req, res) => {
     res.sendFile(path.join(`${absBuildPath}/index.html`));
   });
 
@@ -93,10 +195,23 @@ async function start(proxy: Proxy) {
 
   const app = await createApp(proxy);
 
-  _httpServer.listen(uiPort);
+  _httpServer = http.createServer(app);
+  _httpServer.listen(config.getUIPort());
 
-  console.log(`Service Listening on ${uiPort}`);
+  console.log(`Service Listening on ${config.getUIPort()}`);
   app.emit('ready');
+
+  if (config.getTLSEnabled()) {
+    await new Promise<void>((resolve, reject) => {
+      const server = https.createServer(getServiceTLSOptions(), app);
+      server.on('error', reject);
+      server.listen(config.getHttpsUIPort(), () => {
+        console.log(`HTTPS Service Listening on ${config.getHttpsUIPort()}`);
+        resolve();
+      });
+      _httpsServer = server;
+    });
+  }
 
   return app;
 }
@@ -104,13 +219,52 @@ async function start(proxy: Proxy) {
 /**
  * Stops the proxy service.
  */
-async function stop() {
-  console.log(`Stopping Service Listening on ${uiPort}`);
-  _httpServer.close();
+async function stop(): Promise<void> {
+  const closePromises: Promise<void>[] = [];
+
+  if (_httpServer) {
+    closePromises.push(
+      new Promise((resolve, reject) => {
+        console.log(`Stopping Service Listening on ${config.getUIPort()}`);
+        _httpServer!.close((err) => {
+          if (err) {
+            reject(err);
+          } else {
+            console.log('Service stopped');
+            _httpServer = null;
+            resolve();
+          }
+        });
+      }),
+    );
+  }
+
+  if (_httpsServer) {
+    closePromises.push(
+      new Promise((resolve, reject) => {
+        _httpsServer!.close((err) => {
+          if (err) {
+            reject(err);
+          } else {
+            console.log('HTTPS Service stopped');
+            _httpsServer = null;
+            resolve();
+          }
+        });
+      }),
+    );
+  }
+
+  return Promise.all(closePromises).then(() => {});
 }
 
-export default {
+export const Service = {
   start,
   stop,
-  httpServer: _httpServer,
+  get httpServer() {
+    return _httpServer;
+  },
+  get httpsServer() {
+    return _httpsServer;
+  },
 };

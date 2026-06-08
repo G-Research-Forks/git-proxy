@@ -1,3 +1,19 @@
+/**
+ * Copyright 2026 GitProxy Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 import React, { useState, useEffect, useContext } from 'react';
 import { makeStyles } from '@material-ui/core/styles';
 import { useNavigate } from 'react-router-dom';
@@ -8,9 +24,10 @@ import styles from '../../../assets/jss/material-dashboard-react/views/dashboard
 import { getRepos } from '../../../services/repo';
 import GridContainer from '../../../components/Grid/GridContainer';
 import GridItem from '../../../components/Grid/GridItem';
-import NewRepo, { RepositoryDataWithId } from './NewRepo';
+import NewRepo from './NewRepo';
+import { RepoView } from '../../../types';
 import RepoOverview from './RepoOverview';
-import { UserContext } from '../../../../context';
+import { UserContext, UserContextType } from '../../../context';
 import Search from '../../../components/Search/Search';
 import Pagination from '../../../components/Pagination/Pagination';
 import Filtering, { FilterOption, SortOrder } from '../../../components/Filtering/Filtering';
@@ -19,7 +36,7 @@ import Danger from '../../../components/Typography/Danger';
 interface GridContainerLayoutProps {
   classes: any;
   openRepo: (repo: string) => void;
-  data: RepositoryDataWithId[];
+  repos: RepoView[];
   repoButton: React.ReactNode;
   onSearch: (query: string) => void;
   currentPage: number;
@@ -31,19 +48,11 @@ interface GridContainerLayoutProps {
   key: string;
 }
 
-interface UserContextType {
-  user: {
-    admin: boolean;
-    [key: string]: any;
-  };
-}
-
 export default function Repositories(): React.ReactElement {
   const useStyles = makeStyles(styles as any);
   const classes = useStyles();
-  const [data, setData] = useState<RepositoryDataWithId[]>([]);
-  const [filteredData, setFilteredData] = useState<RepositoryDataWithId[]>([]);
-  const [, setAuth] = useState<boolean>(true);
+  const [repos, setRepos] = useState<RepoView[]>([]);
+  const [filteredRepos, setFilteredRepos] = useState<RepoView[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isError, setIsError] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string>('');
@@ -51,36 +60,42 @@ export default function Repositories(): React.ReactElement {
   const itemsPerPage: number = 5;
   const navigate = useNavigate();
   const { user } = useContext<UserContextType>(UserContext);
-  const openRepo = (repoId: string): void =>
-    navigate(`/dashboard/repo/${repoId}`, { replace: true });
+  const openRepo = (repoId: string): void => navigate(`/dashboard/repo/${repoId}`);
 
   useEffect(() => {
-    getRepos(
-      setIsLoading,
-      (data: RepositoryDataWithId[]) => {
-        setData(data);
-        setFilteredData(data);
-      },
-      setAuth,
-      setIsError,
-      setErrorMessage,
-    );
+    const load = async () => {
+      setIsLoading(true);
+      const result = await getRepos();
+      if (result.success && result.data) {
+        setRepos(result.data);
+        setFilteredRepos(result.data);
+      } else if (result.status === 401) {
+        setIsLoading(false);
+        navigate('/login', { replace: true });
+        return;
+      } else {
+        setIsError(true);
+        setErrorMessage(result.message || 'Failed to load repositories');
+      }
+      setIsLoading(false);
+    };
+    load();
   }, []);
 
-  const refresh = async (repo: RepositoryDataWithId): Promise<void> => {
-    const updatedData = [...data, repo];
-    setData(updatedData);
-    setFilteredData(updatedData);
+  const refresh = async (repo: RepoView): Promise<void> => {
+    const updatedRepos = [...repos, repo];
+    setRepos(updatedRepos);
+    setFilteredRepos(updatedRepos);
   };
 
   const handleSearch = (query: string): void => {
     setCurrentPage(1);
     if (!query) {
-      setFilteredData(data);
+      setFilteredRepos(repos);
     } else {
       const lowercasedQuery = query.toLowerCase();
-      setFilteredData(
-        data.filter(
+      setFilteredRepos(
+        repos.filter(
           (repo) =>
             repo.name.toLowerCase().includes(lowercasedQuery) ||
             repo.project.toLowerCase().includes(lowercasedQuery),
@@ -90,40 +105,40 @@ export default function Repositories(): React.ReactElement {
   };
 
   const handleFilterChange = (filterOption: FilterOption, sortOrder: SortOrder): void => {
-    const sortedData = [...data];
+    const sortedRepos = [...repos];
     switch (filterOption) {
       case 'Date Modified':
-        sortedData.sort(
+        sortedRepos.sort(
           (a, b) =>
             new Date(a.lastModified || 0).getTime() - new Date(b.lastModified || 0).getTime(),
         );
         break;
       case 'Date Created':
-        sortedData.sort(
+        sortedRepos.sort(
           (a, b) => new Date(a.dateCreated || 0).getTime() - new Date(b.dateCreated || 0).getTime(),
         );
         break;
       case 'Alphabetical':
-        sortedData.sort((a, b) => a.name.localeCompare(b.name));
+        sortedRepos.sort((a, b) => a.name.localeCompare(b.name));
         break;
       default:
         break;
     }
     if (sortOrder === 'desc') {
-      sortedData.reverse();
+      sortedRepos.reverse();
     }
 
-    setFilteredData(sortedData);
+    setFilteredRepos(sortedRepos);
   };
 
   const handlePageChange = (page: number): void => setCurrentPage(page);
   const startIdx = (currentPage - 1) * itemsPerPage;
-  const paginatedData = filteredData.slice(startIdx, startIdx + itemsPerPage);
+  const paginatedRepos = filteredRepos.slice(startIdx, startIdx + itemsPerPage);
 
   if (isLoading) return <div>Loading...</div>;
   if (isError) return <Danger>{errorMessage}</Danger>;
 
-  const addrepoButton = user.admin ? (
+  const addrepoButton = user?.admin ? (
     <GridItem>
       <NewRepo onSuccess={refresh} />
     </GridItem>
@@ -135,11 +150,11 @@ export default function Repositories(): React.ReactElement {
     key: 'x',
     classes: classes,
     openRepo: openRepo,
-    data: paginatedData,
+    repos: paginatedRepos,
     repoButton: addrepoButton,
     onSearch: handleSearch,
     currentPage: currentPage,
-    totalItems: filteredData.length,
+    totalItems: filteredRepos.length,
     itemsPerPage: itemsPerPage,
     onPageChange: handlePageChange,
     onFilterChange: handleFilterChange,
@@ -159,10 +174,13 @@ function getGridContainerLayOut(props: GridContainerLayoutProps): React.ReactEle
         >
           <Table id={props.tableId} className={props.classes.table} aria-label='simple table'>
             <TableBody>
-              {props.data.map((row) => {
-                if (row.url) {
+              {props.repos.map((repo) => {
+                if (repo.url) {
                   return (
-                    <RepoOverview data={{ ...row, proxyURL: row.proxyURL || '' }} key={row._id} />
+                    <RepoOverview
+                      repo={{ ...repo, proxyURL: repo.proxyURL || '' }}
+                      key={repo._id}
+                    />
                   );
                 }
                 return null;

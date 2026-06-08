@@ -1,27 +1,41 @@
-import fs from 'fs';
+/**
+ * Copyright 2026 GitProxy Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 import Datastore from '@seald-io/nedb';
 import _ from 'lodash';
 
 import { Repo, RepoQuery } from '../types';
 import { toClass } from '../helper';
+import { handleErrorAndLog } from '../../utils/errors';
 
 const COMPACTION_INTERVAL = 1000 * 60 * 60 * 24; // once per day
 
-// these don't get coverage in tests as they have already been run once before the test
-/* istanbul ignore if */
-if (!fs.existsSync('./.data')) fs.mkdirSync('./.data');
-/* istanbul ignore if */
-if (!fs.existsSync('./.data/db')) fs.mkdirSync('./.data/db');
-
 // export for testing purposes
-export const db = new Datastore({ filename: './.data/db/repos.db', autoload: true });
-
+export let db: Datastore;
+if (process.env.NODE_ENV === 'test') {
+  db = new Datastore({ inMemoryOnly: true, autoload: true });
+} else {
+  db = new Datastore({ filename: './.data/db/repos.db', autoload: true });
+}
 try {
   db.ensureIndex({ fieldName: 'url', unique: true });
-} catch (e) {
-  console.error(
+} catch (error: unknown) {
+  handleErrorAndLog(
+    error,
     'Failed to build a unique index of Repository URLs. Please check your database file for duplicate entries or delete the duplicate through the UI and restart. ',
-    e,
   );
 }
 

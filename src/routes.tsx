@@ -1,25 +1,23 @@
-/* !
-
-=========================================================
-* Material Dashboard React - v1.9.0
-=========================================================
-
-* Product Page: https://www.creative-tim.com/product/material-dashboard-react
-* Copyright 2020 Creative Tim (https://www.creative-tim.com)
-* Licensed under MIT (https://github.com/creativetimofficial/material-dashboard-react/blob/master/LICENSE.md)
-
-* Coded by Creative Tim
-
-=========================================================
-
-* The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
-
-*/
+/**
+ * Copyright 2026 GitProxy Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 
 import React from 'react';
 import RouteGuard from './ui/components/RouteGuard/RouteGuard';
 import Person from '@material-ui/icons/Person';
-import OpenPushRequests from './ui/views/OpenPushRequests/OpenPushRequests';
+import PushRequests from './ui/views/PushRequests/PushRequests';
 import PushDetails from './ui/views/PushDetails/PushDetails';
 import User from './ui/views/User/UserProfile';
 import UserList from './ui/views/UserList/UserList';
@@ -30,7 +28,7 @@ import SettingsView from './ui/views/Settings/Settings';
 import { RepoIcon } from '@primer/octicons-react';
 import { AccountCircle, Dashboard, Group, Settings } from '@material-ui/icons';
 
-import { Route } from './types/models';
+import { Route } from './ui/types';
 
 const dashboardRoutes: Route[] = [
   {
@@ -55,9 +53,7 @@ const dashboardRoutes: Route[] = [
     path: '/push',
     name: 'Dashboard',
     icon: Dashboard,
-    component: (props) => (
-      <RouteGuard component={OpenPushRequests} fullRoutePath={`/dashboard/push`} />
-    ),
+    component: (props) => <RouteGuard component={PushRequests} fullRoutePath={`/dashboard/push`} />,
     layout: '/dashboard',
     visible: true,
   },

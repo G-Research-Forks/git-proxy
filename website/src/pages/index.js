@@ -1,9 +1,24 @@
+/**
+ * Copyright 2026 GitProxy Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 import React, { useEffect } from 'react';
 import Layout from '@theme/Layout';
 import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
 import Avatar from '../components/avatar';
 import Testimonials from './testimonials';
-import ReactPlayer from 'react-player';
 import axios from 'axios';
 
 /**
@@ -60,14 +75,17 @@ function Home() {
           </header>
           {showDemo ? (
             <section style={{ background: 'black' }}>
-              <ReactPlayer
-                url='https://www.finos.org/hubfs/Projects%20%2B%20SIGs/Open%20Source%20Readiness%20OSR/OSR%20Meeting_%20GitProxy%20Jamie%20Slome%20Citi%20Presentation.mp4#t=496'
-                controls={true}
-                width='100%'
-                pip={true}
-                stopOnUnmount={false}
-                playing={true}
-              />
+              <video
+                controls
+                style={{ width: '100%', display: 'block', aspectRatio: '16/9' }}
+                preload='metadata'
+              >
+                <source
+                  src='https://www.finos.org/hubfs/Projects%20%2B%20SIGs/Open%20Source%20Readiness%20OSR/OSR%20Meeting_%20GitProxy%20Jamie%20Slome%20Citi%20Presentation.mp4#t=496'
+                  type='video/mp4'
+                />
+                Your browser does not support the video tag.
+              </video>
             </section>
           ) : (
             <section className='terminal'>
@@ -163,21 +181,13 @@ function Home() {
           <div className='col col--4'>
             <div className='col-demo'>
               {' '}
-              <Avatar
-                name='Jamie Slome'
-                description='Open Source Operations at Citi'
-                username='JamieSlome'
-              />
+              <Avatar name='Paul Groves' description='Director at Citi' username='grovesy' />
             </div>
           </div>
           <div className='col col--4'>
             <div className='col-demo'>
               {' '}
-              <Avatar
-                name='Thomas Cooper'
-                description='Director, OSS Development at RBC'
-                username='coopernetes'
-              />
+              <Avatar name='Jamie Slome' description='Emeritus Maintainer' username='JamieSlome' />
             </div>
           </div>
           <div className='col col--4'>
@@ -187,6 +197,46 @@ function Home() {
                 name='Juan Escalada'
                 description='Open Source Software Engineer at G-Research'
                 username='jescalada'
+              />
+            </div>
+          </div>
+        </div>
+        <div className='row margin-bottom--xl'>
+          <div className='col col--4'>
+            <div className='col-demo'>
+              <Avatar
+                name='Kris West'
+                description='Principal Engineer at NatWest Group'
+                username='kriswest'
+              />
+            </div>
+          </div>
+          <div className='col col--4'>
+            <div className='col-demo'>
+              <Avatar
+                name='Thomas Cooper'
+                description='Director, OSS Development at RBC'
+                username='coopernetes'
+              />
+            </div>
+          </div>
+          <div className='col col--4'>
+            <div className='col-demo'>
+              <Avatar
+                name='Jack Kelly'
+                description='Senior Consultant at ControlPlane'
+                username='06kellyjac'
+              />
+            </div>
+          </div>
+        </div>
+        <div className='row margin-bottom--xl'>
+          <div className='col col--4'>
+            <div className='col-demo'>
+              <Avatar
+                name='Andy Pols'
+                description='Engineer at Qube Research & Technologies'
+                username='andypols'
               />
             </div>
           </div>

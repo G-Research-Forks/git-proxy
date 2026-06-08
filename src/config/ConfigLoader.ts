@@ -1,3 +1,19 @@
+/**
+ * Copyright 2026 GitProxy Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 import * as fs from 'fs';
 import * as path from 'path';
 import axios from 'axios';
@@ -5,57 +21,12 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { EventEmitter } from 'events';
 import envPaths from 'env-paths';
-import { GitProxyConfig, Convert } from './generated/config';
+import { GitProxyConfig } from './generated/config';
+import { Configuration, ConfigurationSource, FileSource, HttpSource, GitSource } from './types';
+import { loadConfig, validateConfig } from './validators';
+import { handleErrorAndLog, handleErrorAndThrow } from '../utils/errors';
 
 const execFileAsync = promisify(execFile);
-
-interface GitAuth {
-  type: 'ssh';
-  privateKeyPath: string;
-}
-
-interface HttpAuth {
-  type: 'bearer';
-  token: string;
-}
-
-interface BaseSource {
-  type: 'file' | 'http' | 'git';
-  enabled: boolean;
-}
-
-interface FileSource extends BaseSource {
-  type: 'file';
-  path: string;
-}
-
-interface HttpSource extends BaseSource {
-  type: 'http';
-  url: string;
-  headers?: Record<string, string>;
-  auth?: HttpAuth;
-}
-
-interface GitSource extends BaseSource {
-  type: 'git';
-  repository: string;
-  branch?: string;
-  path: string;
-  auth?: GitAuth;
-}
-
-type ConfigurationSource = FileSource | HttpSource | GitSource;
-
-export interface ConfigurationSources {
-  enabled: boolean;
-  sources: ConfigurationSource[];
-  reloadIntervalSeconds: number;
-  merge?: boolean;
-}
-
-export interface Configuration extends GitProxyConfig {
-  configurationSources?: ConfigurationSources;
-}
 
 // Add path validation helper
 function isValidPath(filePath: string): boolean {
@@ -67,7 +38,7 @@ function isValidPath(filePath: string): boolean {
   try {
     path.resolve(filePath);
     return true;
-  } catch (error) {
+  } catch (error: unknown) {
     return false;
   }
 }
@@ -126,8 +97,8 @@ export class ConfigLoader extends EventEmitter {
         fs.mkdirSync(this.cacheDir, { recursive: true });
         console.log(`Created cache directory at ${this.cacheDir}`);
         return true;
-      } catch (err) {
-        console.error('Failed to create cache directory:', err);
+      } catch (error: unknown) {
+        handleErrorAndLog(error, 'Failed to create cache directory');
         return false;
       }
     }
@@ -195,23 +166,25 @@ export class ConfigLoader extends EventEmitter {
       );
       console.log(`Found ${enabledSources.length} enabled configuration sources`);
 
-      const configs = await Promise.all(
+      const loadedConfigs = await Promise.all(
         enabledSources.map(async (source: ConfigurationSource) => {
           try {
             console.log(`Loading configuration from ${source.type} source`);
             return await this.loadFromSource(source);
-          } catch (error: any) {
-            console.error(`Error loading from ${source.type} source:`, error.message);
+          } catch (error: unknown) {
+            handleErrorAndLog(error, `Error loading from ${source.type} source`);
             return null;
           }
         }),
       );
 
       // Filter out null results from failed loads
-      const validConfigs = configs.filter((config): config is GitProxyConfig => config !== null);
+      const nonNullConfigs = loadedConfigs.filter(
+        (config): config is GitProxyConfig => config !== null,
+      );
 
-      if (validConfigs.length === 0) {
-        console.log('No valid configurations loaded from any source');
+      if (nonNullConfigs.length === 0) {
+        console.log('All loaded configurations are empty, skipping reload');
         return;
       }
 
@@ -220,15 +193,20 @@ export class ConfigLoader extends EventEmitter {
       console.log(`Using ${shouldMerge ? 'merge' : 'override'} strategy for configuration`);
 
       const newConfig = shouldMerge
-        ? validConfigs.reduce(
+        ? nonNullConfigs.reduce(
             (acc, curr) => {
               return this.deepMerge(acc, curr) as Configuration;
             },
             { ...this.config },
           )
-        : { ...this.config, ...validConfigs[validConfigs.length - 1] }; // Use last config for override
+        : { ...this.config, ...nonNullConfigs[nonNullConfigs.length - 1] }; // Use last config for override
 
-      // Emit change event if config changed
+      if (!validateConfig(newConfig)) {
+        console.error('Invalid configuration, skipping reload');
+        return;
+      }
+
+      // Emit change event if config changed and is valid
       if (JSON.stringify(newConfig) !== JSON.stringify(this.config)) {
         console.log('Configuration has changed, updating and emitting change event');
         this.config = newConfig;
@@ -236,8 +214,8 @@ export class ConfigLoader extends EventEmitter {
       } else {
         console.log('Configuration has not changed, no update needed');
       }
-    } catch (error: any) {
-      console.error('Error reloading configuration:', error);
+    } catch (error: unknown) {
+      handleErrorAndLog(error, 'Error reloading configuration');
       this.emit('configurationError', error);
     } finally {
       this.isReloading = false;
@@ -265,16 +243,7 @@ export class ConfigLoader extends EventEmitter {
       throw new Error('Invalid configuration file path');
     }
     console.log(`Loading configuration from file: ${configPath}`);
-    const content = await fs.promises.readFile(configPath, 'utf8');
-
-    // Use QuickType to validate and parse the configuration
-    try {
-      return Convert.toGitProxyConfig(content);
-    } catch (error) {
-      throw new Error(
-        `Invalid configuration file format: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      );
-    }
+    return loadConfig(`file: ${configPath}`, async () => fs.promises.readFile(configPath, 'utf8'));
   }
 
   async loadFromHttp(source: HttpSource): Promise<GitProxyConfig> {
@@ -284,18 +253,10 @@ export class ConfigLoader extends EventEmitter {
       ...(source.auth?.type === 'bearer' ? { Authorization: `Bearer ${source.auth.token}` } : {}),
     };
 
-    const response = await axios.get(source.url, { headers });
-
-    // Use QuickType to validate and parse the configuration from HTTP response
-    try {
-      const configJson =
-        typeof response.data === 'string' ? response.data : JSON.stringify(response.data);
-      return Convert.toGitProxyConfig(configJson);
-    } catch (error) {
-      throw new Error(
-        `Invalid configuration format from HTTP source: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      );
-    }
+    return loadConfig(`HTTP: ${source.url}`, async () => {
+      const response = await axios.get(source.url, { headers });
+      return typeof response.data === 'string' ? response.data : JSON.stringify(response.data);
+    });
   }
 
   async loadFromGit(source: GitSource): Promise<GitProxyConfig> {
@@ -353,18 +314,16 @@ export class ConfigLoader extends EventEmitter {
       try {
         await execFileAsync('git', ['clone', source.repository, repoDir], execOptions);
         console.log('Repository cloned successfully');
-      } catch (error: any) {
-        console.error('Failed to clone repository:', error.message);
-        throw new Error(`Failed to clone repository: ${error.message}`);
+      } catch (error: unknown) {
+        handleErrorAndThrow(error, 'Failed to clone repository');
       }
     } else {
       console.log(`Pulling latest changes from ${source.repository}`);
       try {
         await execFileAsync('git', ['pull'], { cwd: repoDir });
         console.log('Repository pulled successfully');
-      } catch (error: any) {
-        console.error('Failed to pull repository:', error.message);
-        throw new Error(`Failed to pull repository: ${error.message}`);
+      } catch (error: unknown) {
+        handleErrorAndThrow(error, 'Failed to pull repository');
       }
     }
 
@@ -374,9 +333,8 @@ export class ConfigLoader extends EventEmitter {
       try {
         await execFileAsync('git', ['checkout', source.branch], { cwd: repoDir });
         console.log(`Branch ${source.branch} checked out successfully`);
-      } catch (error: any) {
-        console.error(`Failed to checkout branch ${source.branch}:`, error.message);
-        throw new Error(`Failed to checkout branch ${source.branch}: ${error.message}`);
+      } catch (error: unknown) {
+        handleErrorAndThrow(error, `Failed to checkout branch ${source.branch}`);
       }
     }
 
@@ -391,17 +349,7 @@ export class ConfigLoader extends EventEmitter {
       throw new Error(`Configuration file not found at ${configPath}`);
     }
 
-    try {
-      const content = await fs.promises.readFile(configPath, 'utf8');
-
-      // Use QuickType to validate and parse the configuration from Git
-      const config = Convert.toGitProxyConfig(content);
-      console.log('Configuration loaded successfully from Git');
-      return config;
-    } catch (error: any) {
-      console.error('Failed to read or parse configuration file:', error.message);
-      throw new Error(`Failed to read or parse configuration file: ${error.message}`);
-    }
+    return loadConfig(`git: ${configPath}`, async () => fs.promises.readFile(configPath, 'utf8'));
   }
 
   deepMerge(target: Record<string, any>, source: Record<string, any>): Record<string, any> {

@@ -1,12 +1,33 @@
+/**
+ * Copyright 2026 GitProxy Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 import { Router, Request, Response, NextFunction, RequestHandler } from 'express';
 import proxy from 'express-http-proxy';
 import { PassThrough } from 'stream';
 import getRawBody from 'raw-body';
 import { executeChain } from '../chain';
-import { processUrlPath, validGitRequest, getAllProxiedHosts } from './helper';
+import { processUrlPath, validGitRequest } from './helper';
+import { getAllProxiedHosts } from '../../db';
 import { ProxyOptions } from 'express-http-proxy';
 import { getMaxPackSizeBytes } from '../../config';
 import { MEGABYTE } from '../../constants';
+import { handleErrorAndLog } from '../../utils/errors';
+import { getUpstreamProxyConfig } from '../../config';
+import { HttpsProxyAgent } from 'https-proxy-agent';
+import { OutgoingHttpHeaders, RequestOptions } from 'http';
 
 enum ActionType {
   ALLOWED = 'Allowed',
@@ -48,10 +69,10 @@ const proxyFilter: ProxyOptions['filter'] = async (req, res) => {
     }
 
     // For POST pack requests, use the raw body extracted by extractRawBody middleware
-    if (isPackPost(req) && (req as any).bodyRaw) {
-      (req as any).body = (req as any).bodyRaw;
+    if (isPackPost(req) && req.bodyRaw) {
+      req.body = req.bodyRaw;
       // Clean up the bodyRaw property before forwarding the request
-      delete (req as any).bodyRaw;
+      delete req.bodyRaw;
     }
 
     const action = await executeChain(req, res);
@@ -69,8 +90,8 @@ const proxyFilter: ProxyOptions['filter'] = async (req, res) => {
 
     // this is the only case where we do not respond directly, instead we return true to proxy the request
     return true;
-  } catch (e) {
-    const message = `Error occurred in proxy filter function ${(e as Error).message ?? e}`;
+  } catch (error: unknown) {
+    const message = handleErrorAndLog(error, 'Error occurred in proxy filter function');
 
     logAction(req.url, req.headers.host, req.headers['user-agent'], ActionType.ERROR, message);
     sendErrorResponse(req, res, message);
@@ -128,7 +149,123 @@ const getRequestPathResolver: (prefix: string) => ProxyOptions['proxyReqPathReso
   };
 };
 
-const proxyReqOptDecorator: ProxyOptions['proxyReqOptDecorator'] = (proxyReqOpts) => proxyReqOpts;
+const getEnvProxyUrl = () =>
+  process.env.HTTPS_PROXY ||
+  process.env.https_proxy ||
+  process.env.HTTP_PROXY ||
+  process.env.http_proxy;
+
+const getEnvNoProxyList = (): string[] => {
+  const noProxy = process.env.NO_PROXY || process.env.no_proxy;
+  if (!noProxy) {
+    return [];
+  }
+  return noProxy
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+};
+
+const hostMatchesNoProxy = (host: string | null | undefined, noProxyList: string[]): boolean => {
+  if (!host) {
+    return false;
+  }
+
+  const hostname = host.split(':')[0];
+
+  return noProxyList.some((pattern) => {
+    if (!pattern) {
+      return false;
+    }
+
+    const trimmed = pattern.trim().replace(/^\./, ''); // strip leading dot
+    if (trimmed === '*') return true; // wildcard - bypass all
+
+    if (trimmed === '') {
+      return false;
+    }
+
+    // Exact match
+    if (hostname === trimmed) {
+      return true;
+    }
+
+    // Domain suffix match, e.g. example.com matches foo.example.com
+    if (hostname.endsWith(`.${trimmed}`)) {
+      return true;
+    }
+
+    return false;
+  });
+};
+
+// WARNING: proxyUrl may contain plaintext credentials in the userinfo portion
+// (e.g. http://user:pass@proxy.corp.local:8080). Never log it directly — use
+// redactProxyUrl() from config for any log statements involving this value.
+let _cachedProxyAgent: { proxyUrl: string; agent: HttpsProxyAgent<string> } | null = null;
+
+const getOrCreateProxyAgent = (proxyUrl: string): HttpsProxyAgent<string> => {
+  if (!_cachedProxyAgent || _cachedProxyAgent.proxyUrl !== proxyUrl) {
+    let parsed: URL;
+    try {
+      parsed = new URL(proxyUrl);
+    } catch {
+      throw new Error(
+        `Invalid upstream proxy URL: check your upstreamProxy.url config or HTTPS_PROXY env var`,
+      );
+    }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      throw new Error(
+        `Unsupported upstream proxy URL scheme "${parsed.protocol.replace(/:$/, '')}": only http and https are supported`,
+      );
+    }
+    if (!parsed.hostname) {
+      throw new Error(
+        `Invalid upstream proxy URL: hostname is missing — check your upstreamProxy.url config or HTTPS_PROXY env var`,
+      );
+    }
+    _cachedProxyAgent = { proxyUrl, agent: new HttpsProxyAgent(proxyUrl) };
+  }
+  return _cachedProxyAgent.agent;
+};
+
+const buildUpstreamProxyAgent = (
+  proxyReqOpts: Omit<RequestOptions, 'headers'> & {
+    headers: OutgoingHttpHeaders;
+  },
+) => {
+  const { enabled, url, noProxy } = getUpstreamProxyConfig();
+
+  const proxyUrl = url || getEnvProxyUrl();
+
+  // If enabled is not existant or false
+  if (enabled === undefined || enabled === false || !proxyUrl) {
+    return undefined;
+  }
+
+  const host: string | null | undefined = proxyReqOpts.host || proxyReqOpts.hostname;
+
+  const combinedNoProxy = [...(noProxy || []), ...getEnvNoProxyList()];
+
+  if (hostMatchesNoProxy(host, combinedNoProxy)) {
+    return undefined;
+  }
+
+  return getOrCreateProxyAgent(proxyUrl);
+};
+
+const proxyReqOptDecorator: ProxyOptions['proxyReqOptDecorator'] = (proxyReqOpts, _srcReq) => {
+  const agent = buildUpstreamProxyAgent(proxyReqOpts);
+
+  if (!agent) {
+    return proxyReqOpts;
+  }
+
+  return {
+    ...proxyReqOpts,
+    agent,
+  };
+};
 
 const proxyReqBodyDecorator: ProxyOptions['proxyReqBodyDecorator'] = (bodyContent, srcReq) => {
   if (srcReq.method === 'GET') {
@@ -163,12 +300,17 @@ const extractRawBody = async (req: Request, res: Response, next: NextFunction) =
 
   try {
     const buf = await getRawBody(pluginStream, { limit: getMaxPackSizeBytes() });
-    (req as any).bodyRaw = buf;
-    (req as any).pipe = (dest: any, opts: any) => proxyStream.pipe(dest, opts);
+    req.bodyRaw = buf;
+    req.pipe = (dest, opts) => proxyStream.pipe(dest, opts);
     next();
-  } catch (e) {
-    console.error(e);
-    proxyStream.destroy(e as Error);
+  } catch (error: unknown) {
+    if (error instanceof Error) {
+      console.error(error.message);
+      proxyStream.destroy(error);
+    } else {
+      console.error(String(error));
+      proxyStream.destroy(new Error(String(error)));
+    }
     res.status(500).end('Proxy error');
   }
 };
@@ -252,4 +394,7 @@ export {
   isPackPost,
   extractRawBody,
   validGitRequest,
+  buildUpstreamProxyAgent,
+  hostMatchesNoProxy,
+  getOrCreateProxyAgent,
 };

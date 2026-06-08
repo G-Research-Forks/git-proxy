@@ -1,3 +1,19 @@
+/**
+ * Copyright 2026 GitProxy Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 import React, { useState } from 'react';
 import clsx from 'clsx';
 import { makeStyles } from '@material-ui/core/styles';
@@ -7,16 +23,19 @@ import Card from '../Card/Card';
 import CardBody from '../Card/CardBody';
 import CardHeader from '../Card/CardHeader';
 import styles from '../../assets/jss/material-dashboard-react/components/customTabsStyle';
+import { SvgIconProps } from '@material-ui/core';
+import Badge from '@material-ui/core/Badge';
 
 const useStyles = makeStyles(styles as any);
 
 type HeaderColor = 'warning' | 'success' | 'danger' | 'info' | 'primary' | 'rose';
 
-interface TabItem {
+export type TabItem = {
   tabName: string;
-  tabIcon?: React.ComponentType;
+  tabIcon?: React.ComponentType<SvgIconProps>;
   tabContent: React.ReactNode;
-}
+  badge?: number;
+};
 
 interface CustomTabsProps {
   headerColor?: HeaderColor;
@@ -24,6 +43,7 @@ interface CustomTabsProps {
   tabs: TabItem[];
   rtlActive?: boolean;
   plainTabs?: boolean;
+  defaultTab?: number;
 }
 
 const CustomTabs: React.FC<CustomTabsProps> = ({
@@ -32,8 +52,9 @@ const CustomTabs: React.FC<CustomTabsProps> = ({
   tabs,
   title,
   rtlActive = false,
+  defaultTab = 0,
 }) => {
-  const [value, setValue] = useState(0);
+  const [value, setValue] = useState(defaultTab);
   const classes = useStyles();
 
   const handleChange = (event: React.ChangeEvent<unknown>, newValue: number) => {
@@ -62,6 +83,13 @@ const CustomTabs: React.FC<CustomTabsProps> = ({
         >
           {tabs.map((prop, key) => {
             const icon = prop.tabIcon ? { icon: <prop.tabIcon /> } : {};
+            const label = prop.badge ? (
+              <Badge badgeContent={prop.badge} color='error'>
+                {prop.tabName}
+              </Badge>
+            ) : (
+              prop.tabName
+            );
             return (
               <Tab
                 classes={{
@@ -70,7 +98,7 @@ const CustomTabs: React.FC<CustomTabsProps> = ({
                   wrapper: classes.tabWrapper,
                 }}
                 key={key}
-                label={prop.tabName}
+                label={label}
                 {...icon}
               />
             );
